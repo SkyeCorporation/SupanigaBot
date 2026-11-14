@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Supaniga MX's — Penguin 1.0.0 Pro · Dashboard</title>
+    <meta name="description" content="Dashboard bot WhatsApp Supaniga MX's Penguin: QR Code, spesifikasi hosting, dan console live." />
+    <meta name="theme-color" content="#05070d" />
+    <meta name="robots" content="noindex" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Cellipse cx=%2232%22 cy=%2236%22 rx=%2219%22 ry=%2223%22 fill=%22%2322d3ee%22/%3E%3Cellipse cx=%2232%22 cy=%2240%22 rx=%2212%22 ry=%2217%22 fill=%22%23f1f5f9%22/%3E%3Cpath d=%22M28 29 L32 33 L36 29 Z%22 fill=%22%23a3e635%22/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- Latar belakang dinamis -->
+    <div class="bg" aria-hidden="true">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="orb orb-c"></div>
+      <div class="grid-overlay"></div>
+      <canvas id="particles"></canvas>
+      <div class="noise"></div>
+    </div>
+
+    <!-- LOGIN -->
+    <section id="login" class="login">
+      <div class="login-card glass reveal">
+        <div class="logo-ring">
+          <svg class="penguin" viewBox="0 0 64 64" aria-hidden="true">
+            <ellipse cx="32" cy="36" rx="19" ry="23" fill="currentColor" opacity=".95" />
+            <ellipse cx="32" cy="40" rx="12" ry="17" fill="var(--belly)" />
+            <circle cx="26" cy="24" r="3.2" fill="var(--belly)" /><circle cx="38" cy="24" r="3.2" fill="var(--belly)" />
+            <circle cx="26.6" cy="24.4" r="1.5" fill="var(--bg)" /><circle cx="37.4" cy="24.4" r="1.5" fill="var(--bg)" />
+            <path d="M28 29 L32 33 L36 29 Z" fill="var(--accent-2)" />
+          </svg>
+        </div>
+        <p class="eyebrow mono">// secure access</p>
+        <h1 class="login-title">Supaniga MX's</h1>
+        <p class="login-sub">Penguin <span class="badge">1.0.0 Pro</span></p>
+
+        <form id="loginForm" class="login-form" autocomplete="on">
+          <label class="field">
+            <span class="mono">password</span>
+            <input id="password" name="password" type="password" placeholder="••••••••••" autocomplete="current-password" required />
+          </label>
+          <button class="btn btn-primary" type="submit" id="loginBtn">
+            <span>Masuk Dashboard</span>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <p id="loginError" class="form-error" role="alert"></p>
+        </form>
+
+        <div id="offlineNote" class="offline-note" hidden>
+          <p><strong>Server bot belum terhubung.</strong> Dashboard ini berjalan bersama bot. Jalankan <code>npm start</code> di hosting kamu, lalu buka alamat hosting tersebut di <code>/dashboard/</code>.</p>
+          <button class="btn btn-ghost" id="retryBtn" type="button">Cek ulang koneksi</button>
+        </div>
+
+        <p class="credit mono">Fullstack Developer: <strong>Demian (Luxion)</strong></p>
+      </div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <main id="app" class="app" hidden>
+      <header class="topbar glass">
+        <div class="brand">
+          <div class="brand-mark">
+            <svg class="penguin" viewBox="0 0 64 64" aria-hidden="true">
+              <ellipse cx="32" cy="36" rx="19" ry="23" fill="currentColor" />
+              <ellipse cx="32" cy="40" rx="12" ry="17" fill="var(--belly)" />
+              <circle cx="26.6" cy="24.4" r="2" fill="var(--bg)" /><circle cx="37.4" cy="24.4" r="2" fill="var(--bg)" />
+              <path d="M28 29 L32 33 L36 29 Z" fill="var(--accent-2)" />
+            </svg>
+          </div>
+          <div>
+            <div class="brand-name">Supaniga MX's</div>
+            <div class="brand-sub mono">Penguin 1.0.0 Pro</div>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span id="statusPill" class="pill"><i></i><span>memuat…</span></span>
+          <span id="clock" class="clock mono">--:--:--</span>
+          <button class="icon-btn" id="logoutBtn" title="Keluar dashboard" aria-label="Keluar dashboard">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="ticker mono" aria-hidden="true"><div class="ticker-track" id="ticker"></div></div>
+
+      <section class="grid">
+        <!-- HERO -->
+        <article class="card glass hero span-8 reveal">
+          <p class="eyebrow mono">// control center</p>
+          <h2 class="hero-title">Penguin <span class="gradient-text">Command Hub</span></h2>
+          <p class="hero-sub">Bot WhatsApp NodeJS · Baileys · Database SQL</p>
+          <div class="hero-meta mono">
+            <div><span class="k">bot.number</span><span class="v" id="botNumber">—</span></div>
+            <div><span class="k">bot.uptime</span><span class="v" id="procUptime">—</span></div>
+            <div><span class="k">prefix</span><span class="v" id="prefix">.</span></div>
+          </div>
+          <div class="stats">
+            <div class="stat"><span class="stat-v" id="sMessages">0</span><span class="stat-k">Pesan</span></div>
+            <div class="stat"><span class="stat-v" id="sCommands">0</span><span class="stat-k">Command dijalankan</span></div>
+            <div class="stat"><span class="stat-v" id="sUsers">0</span><span class="stat-k">User</span></div>
+            <div class="stat"><span class="stat-v" id="sGroups">0</span><span class="stat-k">Grup</span></div>
+          </div>
+        </article>
+
+        <!-- QR -->
+        <article class="card glass qr-card span-4 reveal">
+          <div class="card-head">
+            <h3>WhatsApp Link</h3>
+            <span class="mono tag" id="qrTag">—</span>
+          </div>
+          <div class="qr-stage" id="qrStage">
+            <div class="qr-frame">
+              <img id="qrImg" alt="QR Code WhatsApp" hidden />
+              <div id="qrConnected" class="qr-connected" hidden>
+                <div class="check">✓</div>
+                <div class="mono" id="qrConnectedNumber">terhubung</div>
+              </div>
+              <div id="qrLoading" class="qr-loading"><span class="spinner"></span><span class="mono">menyiapkan…</span></div>
+              <div class="scanline"></div>
+            </div>
+          </div>
+          <p class="qr-help" id="qrHelp">Buka WhatsApp → Perangkat tertaut → Tautkan perangkat, lalu scan QR ini.</p>
+          <button class="btn btn-danger" id="waLogoutBtn" type="button">Logout sesi WhatsApp</button>
+        </article>
+
+        <!-- SPEC -->
+        <article class="card glass span-7 reveal">
+          <div class="card-head">
+            <h3>Spesifikasi Hosting</h3>
+            <span class="mono tag" id="hostName">—</span>
+          </div>
+          <div class="gauges">
+            <div class="gauge" data-key="cpu"><svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="50"/><circle class="g-bar" cx="60" cy="60" r="50"/></svg><div class="g-label"><b class="mono">0%</b><span>CPU</span></div></div>
+            <div class="gauge" data-key="ram"><svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="50"/><circle class="g-bar" cx="60" cy="60" r="50"/></svg><div class="g-label"><b class="mono">0%</b><span>RAM</span></div></div>
+            <div class="gauge" data-key="disk"><svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="50"/><circle class="g-bar" cx="60" cy="60" r="50"/></svg><div class="g-label"><b class="mono">0%</b><span>Disk</span></div></div>
+          </div>
+          <canvas id="spark" class="spark" height="60"></canvas>
+          <dl class="specs mono" id="specs"></dl>
+        </article>
+
+        <!-- DATABASE -->
+        <article class="card glass span-5 reveal">
+          <div class="card-head">
+            <h3>Database SQL</h3>
+            <span class="mono tag">SQLite</span>
+          </div>
+          <div class="db-stats">
+            <div><b class="mono" id="dbUsers">0</b><span>user</span></div>
+            <div><b class="mono" id="dbBanned">0</b><span>user banned</span></div>
+            <div><b class="mono" id="dbRegist">0</b><span>grup aktif</span></div>
+            <div><b class="mono" id="dbGBanned">0</b><span>grup banned</span></div>
+          </div>
+          <div class="table-wrap">
+            <table class="table mono">
+              <thead><tr><th>GID</th><th>Grup</th><th>Status</th></tr></thead>
+              <tbody id="groupRows"><tr><td colspan="3" class="muted">Belum ada grup</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+
+        <!-- CONSOLE -->
+        <article class="card glass console-card span-12 reveal">
+          <div class="card-head">
+            <h3><span class="dots"><i></i><i></i><i></i></span> Console</h3>
+            <div class="console-actions">
+              <select id="logFilter" class="select mono" aria-label="Filter log">
+                <option value="all">semua</option>
+                <option value="cmd">command</option>
+                <option value="success">sukses</option>
+                <option value="warn">peringatan</option>
+                <option value="error">error</option>
+              </select>
+              <button class="btn btn-ghost sm" id="pauseBtn" type="button">Jeda</button>
+              <button class="btn btn-ghost sm" id="clearBtn" type="button">Bersihkan</button>
+            </div>
+          </div>
+          <div class="console mono" id="console" role="log" aria-live="polite"></div>
+          <p class="console-note mono">🔒 Nomor WhatsApp orang lain otomatis disensor — hanya nomor bot yang terhubung yang ditampilkan.</p>
+        </article>
+
+        <!-- COMMANDS -->
+        <article class="card glass span-8 reveal">
+          <div class="card-head">
+            <h3>Command <span class="mono muted" id="cmdCount"></span></h3>
+            <button class="btn btn-ghost sm" id="reloadBtn" type="button">↻ Reload</button>
+          </div>
+          <div class="cmd-grid" id="cmdGrid"></div>
+        </article>
+
+        <!-- CREDITS -->
+        <article class="card glass credits span-4 reveal">
+          <p class="eyebrow mono">// built by</p>
+          <div class="avatar mono">DL</div>
+          <h3 class="dev-name">Demian <span class="muted">(Luxion)</span></h3>
+          <p class="dev-role mono">Fullstack Developer</p>
+          <div class="chips mono">
+            <span>Node.js</span><span>Baileys</span><span>SQLite</span><span>Express</span><span>SSE</span>
+          </div>
+          <pre class="code mono"><span class="c">// Supaniga MX's</span>
+<span class="k">const</span> penguin = {
+  edition: <span class="s">"1.0.0 Pro"</span>,
+  dev: <span class="s">"Demian (Luxion)"</span>,
+};</pre>
+        </article>
+      </section>
+
+      <footer class="footer mono">
+        <span>Supaniga MX's — Penguin 1.0.0 Pro</span>
+        <span>Fullstack Developer: <strong>Demian (Luxion)</strong></span>
+      </footer>
+    </main>
+
+    <div id="toast" class="toast mono" role="status"></div>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

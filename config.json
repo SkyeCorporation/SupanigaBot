@@ -1,0 +1,10 @@
+{
+  "prefix": ".",
+  "admin": [],
+  "moderator": [],
+  "botName": "Penguin",
+  "dashboard": {
+    "port": 3000,
+    "password": "#Supaniga123"
+  }
+}

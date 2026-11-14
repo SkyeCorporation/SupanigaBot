@@ -1,0 +1,23 @@
+{
+  "name": "supaniga-mx-penguin",
+  "version": "1.0.0",
+  "description": "Supaniga MX's — Penguin 1.0.0 Pro: Bot WhatsApp NodeJS (Baileys) + Database SQL + Web Dashboard",
+  "author": "Demian (Luxion)",
+  "main": "index.js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch-path=./core --watch-path=./cmds index.js"
+  },
+  "dependencies": {
+    "baileys": "7.0.0-rc14",
+    "better-sqlite3": "^12",
+    "express": "^5",
+    "pino": "^10.4.0",
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

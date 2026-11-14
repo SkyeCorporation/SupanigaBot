@@ -1,0 +1,8 @@
+node_modules
+*.log
+.env
+.DS_Store
+# Data runtime (jangan di-push)
+session/
+database/*.db
+database/*.db-*
