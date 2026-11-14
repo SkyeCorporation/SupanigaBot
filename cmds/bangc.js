@@ -4,6 +4,7 @@ module.exports = {
     cooldown: 3,
     description: "Banned grup ini",
     usage: "bangc [alasan]",
+    category: "Moderasi",
     price: 0,
     role: 2,
   },

@@ -3,6 +3,7 @@ module.exports = {
     name: "unbangc",
     cooldown: 3,
     description: "Buka banned grup ini",
+    category: "Moderasi",
     price: 0,
     role: 2,
   },

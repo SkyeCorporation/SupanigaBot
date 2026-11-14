@@ -4,6 +4,7 @@ module.exports = {
     cooldown: 2,
     description: "Tambah saldo user",
     usage: "addmoney <@tag | reply | nomor> <jumlah>",
+    category: "Admin",
     price: 0,
     role: 3,
   },

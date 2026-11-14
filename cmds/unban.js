@@ -4,6 +4,7 @@ module.exports = {
     cooldown: 3,
     description: "Buka banned user",
     usage: "unban <@tag | reply | nomor>",
+    category: "Moderasi",
     price: 0,
     role: 2,
   },

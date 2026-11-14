@@ -4,6 +4,7 @@ module.exports = {
     cooldown: 30,
     description: "Ganti nama kamu di database bot",
     usage: "setname <nama>",
+    category: "User",
     price: 0,
     role: 0,
   },

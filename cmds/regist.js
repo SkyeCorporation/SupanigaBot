@@ -3,6 +3,7 @@ module.exports = {
     name: "regist",
     cooldown: 5,
     description: "Daftarkan grup ini agar bot aktif",
+    category: "Admin Grup",
     price: 0,
     role: 2,
   },

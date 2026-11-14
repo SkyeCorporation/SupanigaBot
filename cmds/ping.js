@@ -3,6 +3,7 @@ module.exports = {
     name: "ping",
     cooldown: 10,
     description: "Cek kecepatan respon bot",
+    category: "Umum",
     price: 0,
     role: 0,
   },

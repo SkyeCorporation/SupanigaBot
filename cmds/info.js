@@ -10,21 +10,20 @@ module.exports = {
     aliases: ["about"],
     cooldown: 10,
     description: "Informasi bot & pembuat",
+    category: "Umum",
     price: 0,
     role: 0,
   },
   onStart: async function ({ api, commands, prefix, utils }) {
-    await api.reply(
-      [
-        "🐧 *Supaniga MX's — Penguin 1.0.0 Pro*",
-        "Bot WhatsApp NodeJS • Baileys • Database SQL",
-        "",
-        `⏱️ Uptime: ${fmt(utils.uptime())}`,
-        `📦 Command: ${commands.length}`,
-        `🔣 Prefix: ${prefix}`,
-        "",
-        "👨‍💻 *Fullstack Developer: Demian (Luxion)*",
-      ].join("\n"),
-    );
+    await api.reply([
+      "🐧 *Supaniga MX's — Penguin 1.0.0 Pro*",
+      "Bot WhatsApp NodeJS • Baileys • Database SQL",
+      "",
+      `⏱️ Uptime: ${fmt(utils.uptime())}`,
+      `📦 Command: ${commands.length}`,
+      `🔣 Prefix: ${prefix}`,
+      "",
+      "👨‍💻 *Fullstack Developer: Demian (Luxion)*",
+    ].join("\n"));
   },
 };
