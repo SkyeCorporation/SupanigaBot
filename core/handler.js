@@ -95,9 +95,6 @@ export async function handleMessage(sock, msg) {
   const ctx = getContextInfo(content);
   const api = createApi(sock, msg, chatJid);
   const quotedMessageId = ctx?.stanzaId || null;
-  const quotedParticipant = ctx?.participant || null;
-  const botJids = [sock.user?.id, sock.user?.lid].filter(Boolean);
-  const replyToBot = Boolean(quotedMessageId && quotedParticipant && botJids.includes(quotedParticipant));
   const event = {
     message: msg,
     chatJid,
@@ -110,11 +107,12 @@ export async function handleMessage(sock, msg) {
     targetNumber: null,
     groupMeta,
     quotedMessageId,
-    replyToBot,
+    replyToBot: false,
   };
 
-  // Handle replies to PIN collages and YTA result lists before parsing a command prefix.
-  if (!isCommand && quotedMessageId && replyToBot) {
+  // Match by the quoted message ID tracked by the command. Do not compare
+  // participant JIDs: Baileys may represent the bot with a PN or LID JID.
+  if (!isCommand && quotedMessageId) {
     for (const replyCommand of commandList) {
       if (typeof replyCommand.hasPendingSelection !== "function") continue;
       let pending = false;
@@ -125,6 +123,7 @@ export async function handleMessage(sock, msg) {
       }
       if (!pending) continue;
       try {
+        event.replyToBot = true; // YTA uses this flag after selection has been matched.
         if (typeof replyCommand.onReply === "function") {
           const handled = await replyCommand.onReply({ api, event, text, quotedMessageId });
           if (handled !== false) return;
@@ -181,11 +180,7 @@ export async function handleMessage(sock, msg) {
     if (number) mentionNumbers.push(number);
   }
   const quotedNumber = ctx?.participant ? await resolveNumber(sock, ctx.participant, { groupMeta }) : null;
-  Object.assign(event, {
-    mentionNumbers,
-    quotedNumber,
-    targetNumber: mentionNumbers[0] || quotedNumber || null,
-  });
+  Object.assign(event, { mentionNumbers, quotedNumber, targetNumber: mentionNumbers[0] || quotedNumber || null });
 
   log.cmd(`User #${user.userID} (${user.nama}) → ${prefix}${cfg.name} di ${where}`);
   state.stats.commands++;
