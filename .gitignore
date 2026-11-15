@@ -6,3 +6,5 @@ node_modules
 session/
 database/*.db
 database/*.db-*
+historyAI.json
+historyAI.json.tmp

@@ -13,6 +13,7 @@ import { state, bus } from "./state.js";
 
 const cooldowns = new Map();
 const groupCache = new Map();
+const botSentMessageIds = new Set();
 const GROUP_TTL = 5 * 60 * 1000;
 const mediaLogger = pino({ level: "silent" });
 
@@ -68,6 +69,14 @@ function sameJid(left, right) {
   return String(left).replace(/:\d+@/, "@").toLowerCase() === String(right).replace(/:\d+@/, "@").toLowerCase();
 }
 
+async function presence(sock, chatJid, status) {
+  try {
+    await sock.sendPresenceUpdate(status, chatJid);
+  } catch {
+    // Best effort only.
+  }
+}
+
 export async function handleMessage(sock, msg) {
   if (!msg?.message || msg.key?.fromMe) return;
   const chatJid = msg.key.remoteJid;
@@ -105,23 +114,25 @@ export async function handleMessage(sock, msg) {
   const api = createApi(sock, msg, chatJid);
   const quotedMessage = ctx?.quotedMessage
     ? {
-        key: { remoteJid: chatJid, id: ctx.stanzaId, participant: ctx.participant },
+        key: { remoteJid: chatJid, id: ctx.stanzaId, participant: ctx.participant, fromMe: sameJid(ctx.participant, sock.user?.id) },
         message: ctx.quotedMessage,
       }
     : null;
-  const replyToBot = !!ctx?.stanzaId && sameJid(ctx.participant, sock.user?.id);
+  const quotedFromBot = !!ctx?.stanzaId && (
+    sameJid(ctx.participant, sock.user?.id) || botSentMessageIds.has(`${chatJid}:${ctx.stanzaId}`)
+  );
+  const replyToBot = quotedFromBot || (!!ctx?.stanzaId && !isGroup && !ctx.participant && !!ctx.quotedMessage);
   const directEsdeath = /^esdeath\b/i.test(text);
-  const esdeathCommand = commands.get("esdeath");
-  const shouldCallEsdeath = !!esdeathCommand && (directEsdeath || replyToBot);
+  const shouldCallEsdeath = !!commands.get("esdeath") && (directEsdeath || replyToBot);
   let command = commands.get(commandName);
   let commandArgs = args;
   if (!commandBody && shouldCallEsdeath) {
-    command = esdeathCommand;
-    commandArgs = [];
+    command = commands.get("esdeath");
+    commandArgs = directEsdeath ? text.replace(/^esdeath\b/i, "").trim().split(/\s+/).filter(Boolean) : [];
   }
 
-  // Pesan biasa dan command tidak dikenal diabaikan agar bot tidak spam.
   if (!command) return;
+
   const cfg = command.config;
   if (!hasPermission(roleLevel, cfg.role)) {
     await api.reply(`⛔ Command ini khusus *${ROLE_NAMES[cfg.role]}* (role ${cfg.role}).`);
@@ -180,6 +191,7 @@ export async function handleMessage(sock, msg) {
   bus.emit("stats", state.stats);
 
   try {
+    await presence(sock, chatJid, "composing");
     await command.onStart({
       api, event, message: msg, args: commandArgs, usersData, groupsData, threadsData: groupsData,
       user, group, role: roleLevel, config, prefix, commandName: cfg.name, commands: commandList,
@@ -190,6 +202,8 @@ export async function handleMessage(sock, msg) {
     if (charged) await usersData.addMoney(nomor, charged);
     log.error(`Error di command ${cfg.name}: ${err.message}`);
     await api.reply(`⚠️ Terjadi error saat menjalankan *${prefix}${cfg.name}*.`).catch(() => {});
+  } finally {
+    await presence(sock, chatJid, "paused");
   }
 }
 
@@ -203,10 +217,23 @@ export function createApi(sock, msg, chatJid) {
     chatJid,
     async sendMessage(content, to = chatJid, options = {}) {
       const jid = typeof to === "string" && to.includes("@") ? to : numberToJid(to) || chatJid;
-      return sock.sendMessage(jid, toContent(content), options);
+      await presence(sock, jid, "composing");
+      try {
+        const sent = await sock.sendMessage(jid, toContent(content), options);
+        if (sent?.key?.id) {
+          botSentMessageIds.add(`${jid}:${sent.key.id}`);
+          if (botSentMessageIds.size > 2000) {
+            const first = botSentMessageIds.values().next().value;
+            if (first) botSentMessageIds.delete(first);
+          }
+        }
+        return sent;
+      } finally {
+        await presence(sock, jid, "paused");
+      }
     },
     async reply(content) {
-      return sock.sendMessage(chatJid, toContent(content), { quoted: msg });
+      return this.sendMessage(content, chatJid, { quoted: msg });
     },
     async react(emoji) {
       return sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } });
