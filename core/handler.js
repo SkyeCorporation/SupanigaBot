@@ -124,11 +124,17 @@ export async function handleMessage(sock, msg) {
   const replyToBot = quotedFromBot || (!!ctx?.stanzaId && !isGroup && !ctx.participant && !!ctx.quotedMessage);
   const directEsdeath = /^esdeath\b/i.test(text);
   const shouldCallEsdeath = !!commands.get("esdeath") && (directEsdeath || replyToBot);
+  const ytaCommand = commands.get("yta");
+  const ytaSelection = !!ytaCommand?.hasPendingSelection?.(chatJid, nomor)
+    && replyToBot && /^\d{1,2}$/.test(text);
   let command = commands.get(commandName);
   let commandArgs = args;
   if (!commandBody && shouldCallEsdeath) {
     command = commands.get("esdeath");
     commandArgs = directEsdeath ? text.replace(/^esdeath\b/i, "").trim().split(/\s+/).filter(Boolean) : [];
+  } else if (!commandBody && ytaSelection) {
+    command = ytaCommand;
+    commandArgs = [];
   }
 
   if (!command) return;
