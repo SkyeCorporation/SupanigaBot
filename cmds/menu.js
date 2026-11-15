@@ -9,7 +9,7 @@ module.exports = {
     price: 0,
     role: 0,
   },
-  onStart: async function ({ api, commands, role, prefix, user, utils, args }) {
+  onStart: async function ({ api, commands, role, prefix, args }) {
     const targetName = args[0]?.toLowerCase();
     if (targetName) {
       const target = commands.find((command) =>
@@ -19,20 +19,14 @@ module.exports = {
         return api.reply(`Command *${targetName}* tidak ditemukan atau kamu tidak memiliki akses.`);
       }
       const command = target.config;
-      const price = command.price > 0 ? `${command.price.toLocaleString("id-ID")}` : "Gratis";
-      const cooldown = command.cooldown > 0 ? `${command.cooldown} detik` : "Tidak ada";
-      const aliases = command.aliases.length ? `\n• *Alias*: ${command.aliases.map((alias) => `${prefix}${alias}`).join(", ")}` : "";
       return api.reply([
         "# *Command Information*",
         "",
         `• *Name*: ${command.name}`,
-        `• *Price*: ${price}`,
-        `• *Cooldown*: ${cooldown}`,
+        `• *Price*: ${command.price > 0 ? command.price.toLocaleString("id-ID") : "Gratis"}`,
+        `• *Cooldown*: ${command.cooldown > 0 ? `${command.cooldown} detik` : "Tidak ada"}`,
         `• *Description*: ${command.description || "Tidak ada deskripsi"}`,
-        `• *Category*: ${command.category}`,
-        `• *Usage*: ${prefix}${command.usage || command.name}`,
-        aliases,
-      ].filter(Boolean).join("\n"));
+      ].join("\n"));
     }
 
     const categories = new Map();
@@ -50,9 +44,9 @@ module.exports = {
       `${prefix}help [nama command], ${prefix}menu [nama command]`,
     ];
     for (const [category, names] of [...categories.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      lines.push("", `• *${category}*`, names.map((name) => `${prefix}${name}`).join(", "));
+      lines.push("", `• *${category}*`, names.join(", "));
     }
-    lines.push("", "_Supaniga MX's Penguin Project 1.0.0_", `Halo *${user.nama}* • Role: ${utils.ROLE_NAMES[role]}`);
+    lines.push("", "_Supaniga MX's Penguin Project 1.0.0_");
     await api.reply(lines.join("\n"));
   },
 };

@@ -7,6 +7,19 @@
   const $ = (s) => document.querySelector(s);
   const state = { online: false, paused: false, filter: "all", logs: [], cpuHistory: [], es: null, overview: null };
 
+  function showDashboardError(message) {
+    const notice = $("#dashboardNotice");
+    if (!notice) return;
+    notice.hidden = false;
+    notice.textContent = message;
+  }
+  window.addEventListener("error", (event) => {
+    if (!$("#app")?.hidden) showDashboardError(`Dashboard mengalami error: ${event.message || "JavaScript error"}. Coba refresh; jika tetap terjadi, kirim pesan ini ke admin.`);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    if (!$("#app")?.hidden) showDashboardError(`Dashboard gagal memuat data: ${event.reason?.message || event.reason || "permintaan gagal"}. Periksa koneksi server lalu refresh.`);
+  });
+
   /* ---------------- Latar belakang partikel ---------------- */
   (function particles() {
     const c = $("#particles");
@@ -36,7 +49,7 @@
         if (p.x < 0 || p.x > w) p.vx *= -1;
         if (p.y < 0 || p.y > h) p.vy *= -1;
         const dx = p.x - mouse.x, dy = p.y - mouse.y, dm = Math.hypot(dx, dy);
-        if (dm < 120 * dpr) { p.x += (dx / dm) * 0.8; p.y += (dy / dm) * 0.8; }
+        if (dm > 0 && dm < 120 * dpr) { p.x += (dx / dm) * 0.8; p.y += (dy / dm) * 0.8; }
       }
       for (let i = 0; i < pts.length; i++) {
         for (let j = i + 1; j < pts.length; j++) {
@@ -241,15 +254,17 @@
   $("#pauseBtn").addEventListener("click", (e) => { state.paused = !state.paused; e.target.textContent = state.paused ? "Lanjut" : "Jeda"; if (!state.paused) renderConsole(); });
   $("#clearBtn").addEventListener("click", () => { state.logs = []; renderConsole(); });
 
-  /* ---------------- Dashboard asli ---------------- */
+  /* ---------------- Dashboard ---------------- */
   async function loadOverview() {
     const r = await api("/api/overview");
-    if (r.status === 401) return showLogin();
-    if (!r.ok || !r.data) return toast("Gagal memuat data dashboard");
+    if (r.status === 401) { showLogin(); return false; }
+    if (!r.ok || !r.data) throw new Error(`API /api/overview gagal (HTTP ${r.status || "tidak diketahui"})`);
     const o = (state.overview = r.data);
+    $("#dashboardNotice").hidden = true;
     $("#prefix").textContent = o.prefix;
     renderStatus(o.status); renderSystem(o.system); renderDatabase(o.database); renderCommands(o.commands, o.prefix);
     state.logs = o.logs || []; renderConsole();
+    return true;
   }
   function connectStream() {
     state.es?.close();
@@ -261,7 +276,10 @@
   }
   setInterval(async () => {
     if (!state.online || $("#app").hidden) return;
-    const r = await api("/api/overview"); if (r.ok && r.data) { state.overview = r.data; renderDatabase(r.data.database); }
+    try {
+      const r = await api("/api/overview");
+      if (r.ok && r.data) { state.overview = r.data; renderDatabase(r.data.database); }
+    } catch (error) { showDashboardError(`Gagal memperbarui dashboard: ${error.message}`); }
   }, 15000);
 
   /* ---------------- Login / sesi ---------------- */
@@ -271,8 +289,13 @@
     setTimeout(() => $("#password")?.focus(), 50);
   }
   function showApp() {
-    $("#login").hidden = true; $("#app").hidden = false;
-    loadOverview().then(connectStream);
+    $("#login").hidden = true;
+    $("#app").hidden = false;
+    $("#dashboardNotice").hidden = true;
+    $("#dashboardNotice").textContent = "Memuat dashboard…";
+    loadOverview().then((loaded) => { if (loaded) connectStream(); }).catch((error) => {
+      showDashboardError(`${error.message}. Dashboard tetap terbuka; periksa log server dan endpoint /api/overview.`);
+    });
   }
 
   $("#loginForm").addEventListener("submit", async (e) => {
@@ -339,7 +362,6 @@
     const ok = await checkServer();
     if (!ok) {
       showLogin();
-      // Coba lagi otomatis tiap 5 detik sampai server bot hidup.
       const t = setInterval(async () => { if (await checkServer()) clearInterval(t); }, 5000);
       return;
     }
