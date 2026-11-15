@@ -8,7 +8,7 @@ import QRCode from "qrcode";
 import { SESSION_DIR } from "./paths.js";
 import { log, rawTerminal } from "./logger.js";
 import { setState, state } from "./state.js";
-import { handleMessage, invalidateGroup, cachedGroupMetadata } from "./handler.js";
+import * as handler from "./handler.js";
 import { pnJidToNumber } from "./number.js";
 
 let sock = null;
@@ -34,7 +34,7 @@ export async function startBot() {
     markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
-    cachedGroupMetadata: async (jid) => cachedGroupMetadata(jid),
+    cachedGroupMetadata: async (jid) => handler.cachedGroupMetadata?.(jid),
   });
   const current = sock;
 
@@ -83,12 +83,12 @@ export async function startBot() {
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
     for (const m of messages) {
-      handleMessage(current, m).catch((err) => log.error(`Handler error: ${err.message}`));
+      handler.handleMessage(current, m).catch((err) => log.error(`Handler error: ${err.message}`));
     }
   });
 
-  sock.ev.on("groups.update", (updates) => updates.forEach((u) => u.id && invalidateGroup(u.id)));
-  sock.ev.on("group-participants.update", (u) => u.id && invalidateGroup(u.id));
+  sock.ev.on("groups.update", (updates) => updates.forEach((u) => u.id && handler.invalidateGroup(u.id)));
+  sock.ev.on("group-participants.update", (u) => u.id && handler.invalidateGroup(u.id));
 
   return sock;
 }
