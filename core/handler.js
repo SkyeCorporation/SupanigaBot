@@ -111,20 +111,17 @@ export async function handleMessage(sock, msg) {
     : null;
   const replyToBot = !!ctx?.stanzaId && sameJid(ctx.participant, sock.user?.id);
   const directEsdeath = /^esdeath\b/i.test(text);
-  const esdeathCommand = commands.get("esdeath") || commands.get("esdeaath");
+  const esdeathCommand = commands.get("esdeath");
   const shouldCallEsdeath = !!esdeathCommand && (directEsdeath || replyToBot);
   let command = commands.get(commandName);
   let commandArgs = args;
   if (!commandBody && shouldCallEsdeath) {
     command = esdeathCommand;
-    commandArgs = directEsdeath ? text.replace(/^esdeath\b/i, "").trim().split(/\s+/).filter(Boolean) : [];
+    commandArgs = [];
   }
 
-  if (!command) {
-    if (!commandBody) return;
-    await api.reply(`❔ Command *${prefix}${commandName}* tidak ditemukan.\nKetik *${prefix}menu* untuk melihat daftar command.`);
-    return;
-  }
+  // Pesan biasa dan command tidak dikenal diabaikan agar bot tidak spam.
+  if (!command) return;
   const cfg = command.config;
   if (!hasPermission(roleLevel, cfg.role)) {
     await api.reply(`⛔ Command ini khusus *${ROLE_NAMES[cfg.role]}* (role ${cfg.role}).`);
@@ -192,7 +189,7 @@ export async function handleMessage(sock, msg) {
     state.stats.errors++;
     if (charged) await usersData.addMoney(nomor, charged);
     log.error(`Error di command ${cfg.name}: ${err.message}`);
-    await api.reply(`⚠️ Terjadi error saat menjalankan *${prefix}${cfg.name}*.${cfg.name === "esdeaath" ? `\n${err.message}` : ""}`).catch(() => {});
+    await api.reply(`⚠️ Terjadi error saat menjalankan *${prefix}${cfg.name}*.`).catch(() => {});
   }
 }
 

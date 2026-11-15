@@ -41,7 +41,7 @@ module.exports = {
       "# *List Command*",
       "",
       "• *Helper*",
-      `${prefix}help [nama command], ${prefix}menu [nama command]`,
+      `${prefix}help, ${prefix}menu`,
     ];
     for (const [category, names] of [...categories.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       lines.push("", `• *${category}*`, names.join(", "));

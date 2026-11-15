@@ -1,11 +1,7 @@
-# SupanigaBot
+# Setup Esdeath AI
 
-WhatsApp bot built with Node.js, Baileys, SQLite, and a web dashboard.
+Tambahkan environment variable `GEMINI_API_KEY` pada menu Variables/Environment di panel hosting (ambil API key dari Google AI Studio). Opsional: atur `GEMINI_MODEL`; default-nya `gemini-2.5-flash`.
 
-## Esdeath AI
+Simpan API key sebagai secret pada hosting dan jangan commit key ke GitHub atau kirimkan ke chat. Jika memakai file `.env` secara lokal, pastikan proses Node/hosting benar-benar memuat file itu; `.env.example` hanya template.
 
-Set `GEMINI_API_KEY` in your hosting environment (or in a local `.env` file loaded by your host) to enable Esdeath. The default model is `gemini-2.5-flash`; override it with `GEMINI_MODEL` if needed. Gemini API quotas and free-tier availability depend on Google AI Studio eligibility, region, and current limits.
-
-Call her by sending `Esdeath hai`, `Esdeath jelaskan hal ini`, or by replying to a message sent by the bot. You can also use `.esdeath <prompt>` or `.ai <prompt>`. Esdeath can analyze images, video, audio, and PDF attachments up to 15 MB.
-
-Use `.help` or `.menu` to view command categories, and `.help <command>` / `.menu <command>` for command details.
+Admin bot yang ditetapkan pada `config.json` adalah nomor WhatsApp dengan format internasional tanpa tanda `+`.

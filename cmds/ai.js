@@ -1,7 +1,7 @@
 module.exports = {
   config: {
-    name: "esdeaath",
-    aliases: ["esdeath", "ai"],
+    name: "esdeath",
+    aliases: ["ai"],
     cooldown: 3,
     description: "Ngobrol atau minta bantuan Esdeath AI",
     usage: "esdeath <pesan> atau balas pesan bot",
@@ -12,7 +12,7 @@ module.exports = {
   onStart: async function ({ api, args, event }) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return api.reply("🔑 Esdeath belum dikonfigurasi. Admin perlu mengisi GEMINI_API_KEY di environment atau file .env.");
+      return api.reply("🔑 Esdeath belum dikonfigurasi. Admin perlu mengisi GEMINI_API_KEY di environment hosting.");
     }
 
     const prompt = args.join(" ").trim() || event.body?.trim() || "Tolong tanggapi pesan yang saya balas.";
@@ -67,5 +67,3 @@ module.exports = {
     await api.reply(answer.slice(0, 4000));
   },
 };
-
-module.exports.config.category = "AI";
