@@ -1,127 +1,19 @@
-const { spawn } = require("node:child_process");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const ytdlpPackage = require("youtube-dl-exec");
-const ffmpegStatic = require("ffmpeg-static");
-
-const MAX_RESULTS = 10;
-const MAX_DURATION_SECONDS = 10 * 60;
-const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
-const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
-const SEARCH_TIMEOUT_MS = 90_000;
-const DOWNLOAD_TIMEOUT_MS = 8 * 60_000;
-const SELECTION_TTL_MS = 10 * 60_000;
-const MAX_ACTIVE_DOWNLOADS = 2;
+const MAX_RESULTS = 8;
+const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
+const SELECTION_TTL_MS = 10 * 60 * 1000;
 const pendingSelections = new Map();
-let activeDownloads = 0;
 
-// youtube-dl-exec exports a callable wrapper and, depending on version, its
-// executable path. Keep the existing spawn interface and prefer explicit env
-// overrides for hosts that provide their own binaries.
-const bundledYtDlp = ytdlpPackage.path || ytdlpPackage.binaryPath || null;
-const bundledFfmpeg = typeof ffmpegStatic === "string" ? ffmpegStatic : null;
-const YTDLP_PATH = process.env.YTDLP_PATH || process.env.YT_DLP_PATH || bundledYtDlp || "yt-dlp";
-const FFMPEG_PATH = process.env.FFMPEG_PATH || bundledFfmpeg || "ffmpeg";
-
-function run(binary, args, { timeout = 60_000, maxOutput = 2 * 1024 * 1024 } = {}) {
-  return new Promise((resolve, reject) => {
-    let child;
-    try {
-      child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let finished = false;
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(new Error(`${path.basename(binary)} melewati batas waktu ${Math.round(timeout / 1000)} detik.`));
-    }, timeout);
-    function finish(error, result) {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(result);
-    }
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-      if (stdout.length > maxOutput) {
-        child.kill("SIGKILL");
-        finish(new Error(`${path.basename(binary)} menghasilkan output melebihi batas.`));
-      }
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-      if (stderr.length > maxOutput) stderr = stderr.slice(-maxOutput);
-    });
-    child.on("error", (error) => {
-      if (error.code === "ENOENT") {
-        finish(new Error(`Executable tidak ditemukan: ${binary}. Pastikan paket terpasang dan binary executable di server.`));
-      } else finish(error);
-    });
-    child.on("close", (code, signal) => {
-      if (finished) return;
-      if (code !== 0) {
-        const detail = stderr.trim().split("\n").slice(-4).join(" | ").slice(0, 900);
-        finish(new Error(detail || `${path.basename(binary)} keluar dengan kode ${code ?? signal ?? "tidak diketahui"}.`));
-      } else finish(null, { stdout, stderr });
-    });
-  });
+function selectionKey(chatJid, senderNumber, messageId) {
+  return `${chatJid}:${senderNumber}:${messageId}`;
 }
 
-function errorDetail(error) {
-  const detail = String(error?.message || error || "Kesalahan tidak diketahui").replace(/[\r\n\t]+/g, " ").trim();
-  return detail.slice(0, 900);
+function clean(value, maxLength = 140) {
+  return String(value || "Unknown").replace(/[\r\n\t]+/g, " ").trim().slice(0, maxLength);
 }
 
-function cleanText(value, maxLength = 180) {
-  return String(value || "Tidak diketahui").replace(/[\r\n\t]+/g, " ").trim().slice(0, maxLength);
-}
-
-function formatDuration(seconds) {
-  if (!Number.isFinite(Number(seconds))) return "durasi tidak diketahui";
-  const value = Math.max(0, Math.floor(Number(seconds)));
-  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
-}
-
-function selectionKey(event) {
-  return `${event.chatJid}:${event.senderNumber}`;
-}
-
-function isAllowedLicense(license) {
-  return /creative commons|cc[- ]by|cc0|public domain/i.test(String(license || ""));
-}
-
-function safeYouTubeUrl(entry) {
-  const candidate = entry.webpage_url || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : "");
-  try {
-    const url = new URL(candidate);
-    if (url.protocol !== "https:" || !["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"].includes(url.hostname)) return null;
-    return url.href;
-  } catch {
-    return null;
-  }
-}
-
-function sanitizeFilename(title) {
-  const base = String(title || "audio").normalize("NFKD").replace(/[^\p{L}\p{N}._ -]/gu, "").trim().slice(0, 80);
-  return `${base || "audio"}.mp3`;
-}
-
-function pruneSelections() {
+function prune() {
   const now = Date.now();
   for (const [key, value] of pendingSelections) if (value.expiresAt <= now) pendingSelections.delete(key);
-}
-
-function ytdlpArgs(args) {
-  // Support python-based and standalone yt-dlp builds. The --no-warnings flag
-  // suppresses useful diagnostics, so deliberately do not pass it.
-  return args;
 }
 
 module.exports = {
@@ -129,123 +21,80 @@ module.exports = {
     name: "yta",
     aliases: [],
     cooldown: 5,
-    description: "Cari video YouTube dan kirim audio yang boleh digunakan ulang",
-    usage: "yta <judul> lalu balas daftar dengan nomor hasil",
+    description: "Cari lagu dan kirim preview audio resmi 30 detik",
+    usage: "yta <judul lagu>, lalu balas daftar dengan nomor",
     category: "Media",
     price: 0,
     role: 0,
   },
-  hasPendingSelection(chatJid, senderNumber) {
-    pruneSelections();
-    return pendingSelections.has(`${chatJid}:${senderNumber}`);
+  hasPendingSelection(chatJid, senderNumber, quotedMessageId) {
+    prune();
+    return pendingSelections.has(selectionKey(chatJid, senderNumber, quotedMessageId));
+  },
+  onReply: async function ({ api, event, text, quotedMessageId }) {
+    prune();
+    const key = selectionKey(event.chatJid, event.senderNumber, quotedMessageId);
+    const pending = pendingSelections.get(key);
+    if (!pending) return false;
+    if (!/^\d{1,2}$/.test(String(text).trim())) {
+      await api.reply(`Balas daftar YTA dengan angka 1-${pending.results.length}.`);
+      return true;
+    }
+    const index = Number(String(text).trim()) - 1;
+    const track = pending.results[index];
+    if (!track) {
+      await api.reply(`Nomor tidak tersedia. Pilih 1-${pending.results.length}.`);
+      return true;
+    }
+    try {
+      await api.reply(`🎧 Mengambil preview resmi *${clean(track.trackName)}*…`);
+      const response = await fetch(track.previewUrl, { signal: AbortSignal.timeout(20000) });
+      if (!response.ok) throw new Error(`Preview API merespons HTTP ${response.status}`);
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.startsWith("audio/")) throw new Error(`URL preview tidak mengembalikan audio (content-type: ${contentType || "tidak ada"}).`);
+      const declaredSize = Number(response.headers.get("content-length") || 0);
+      if (declaredSize > MAX_PREVIEW_BYTES) throw new Error("File preview melewati batas 2 MB.");
+      const audio = Buffer.from(await response.arrayBuffer());
+      if (!audio.length || audio.length > MAX_PREVIEW_BYTES) throw new Error(`Preview kosong atau terlalu besar (${audio.length} byte).`);
+      await api.sendMessage({ audio, mimetype: contentType.includes("mpeg") ? "audio/mpeg" : "audio/mp4", fileName: `${clean(track.trackName, 70)}.m4a`, ptt: false });
+      pendingSelections.delete(key);
+    } catch (error) {
+      const detail = String(error?.message || error).replace(/[\r\n\t]+/g, " ").slice(0, 700);
+      console.error(`[yta] ${detail}`);
+      await api.reply(`❌ Preview YTA gagal: ${detail}`).catch(() => {});
+    }
+    return true;
   },
   onStart: async function ({ api, args, event }) {
-    pruneSelections();
-    const key = selectionKey(event);
-    const pending = pendingSelections.get(key);
-    const selectionText = String(event.body || "").trim();
-
-    if (!args.length && event.replyToBot && /^\d{1,2}$/.test(selectionText) && pending) {
-      const selectedNumber = Number(selectionText);
-      if (selectedNumber < 1 || selectedNumber > pending.results.length) {
-        await api.reply(`Pilih nomor 1-${pending.results.length} dengan membalas daftar hasil YTA.`);
-        return;
-      }
-      if (activeDownloads >= MAX_ACTIVE_DOWNLOADS) {
-        await api.reply("⏳ Antrean unduhan sedang penuh. Coba lagi sebentar.");
-        return;
-      }
-
-      const entry = pending.results[selectedNumber - 1];
-      const videoUrl = safeYouTubeUrl(entry);
-      if (!videoUrl) throw new Error("URL video dari hasil pencarian tidak valid.");
-      activeDownloads++;
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "supaniga-yta-"));
-      try {
-        await api.reply(`⬇️ Mengambil audio hasil nomor ${selectedNumber}…`);
-        const metadataResult = await run(YTDLP_PATH, ytdlpArgs([
-          "--no-call-home", "--no-playlist", "--skip-download", "--dump-single-json", videoUrl,
-        ]), { timeout: SEARCH_TIMEOUT_MS });
-        let metadata;
-        try { metadata = JSON.parse(metadataResult.stdout); }
-        catch { throw new Error(`yt-dlp tidak mengembalikan metadata JSON. Output: ${metadataResult.stdout.slice(0, 400)}`); }
-        if (!isAllowedLicense(metadata.license)) {
-          await api.reply("❌ Video ini tidak mencantumkan lisensi Creative Commons/public domain, jadi tidak dapat diunduh oleh command ini.");
-          return;
-        }
-        if (!Number.isFinite(Number(metadata.duration)) || Number(metadata.duration) <= 0 || Number(metadata.duration) > MAX_DURATION_SECONDS) {
-          await api.reply(`❌ Durasi video harus maksimal ${formatDuration(MAX_DURATION_SECONDS)}.`);
-          return;
-        }
-
-        const sourceTemplate = path.join(tempDir, "source.%(ext)s");
-        await run(YTDLP_PATH, ytdlpArgs([
-          "--no-call-home", "--no-playlist", "--no-progress", "--format", "bestaudio/best",
-          "--max-filesize", String(MAX_SOURCE_BYTES), "--output", sourceTemplate, videoUrl,
-        ]), { timeout: DOWNLOAD_TIMEOUT_MS, maxOutput: 512 * 1024 });
-        const sourceFile = fs.readdirSync(tempDir).map((name) => path.join(tempDir, name)).find((file) => fs.statSync(file).isFile());
-        if (!sourceFile) throw new Error("Unduhan berhasil diklaim selesai, tetapi file audio tidak ditemukan di direktori sementara.");
-        if (fs.statSync(sourceFile).size > MAX_SOURCE_BYTES) throw new Error(`Audio sumber terlalu besar (${fs.statSync(sourceFile).size} byte).`);
-
-        const outputFile = path.join(tempDir, "audio.mp3");
-        await run(FFMPEG_PATH, [
-          "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", sourceFile,
-          "-vn", "-codec:a", "libmp3lame", "-b:a", "96k", "-fs", String(MAX_AUDIO_BYTES), outputFile,
-        ], { timeout: 3 * 60_000, maxOutput: 512 * 1024 });
-        const stats = fs.statSync(outputFile);
-        if (!stats.isFile() || stats.size === 0 || stats.size > MAX_AUDIO_BYTES) {
-          throw new Error(`File MP3 kosong atau ukurannya melewati batas 15 MB (ukuran: ${stats.size} byte).`);
-        }
-        await api.sendMessage({ audio: fs.readFileSync(outputFile), mimetype: "audio/mpeg", fileName: sanitizeFilename(metadata.title || entry.title), ptt: false });
-        pendingSelections.delete(key);
-      } catch (error) {
-        const detail = errorDetail(error);
-        console.error(`[yta] ${detail}`);
-        await api.reply(`❌ YTA gagal saat mengunduh/mengonversi: ${detail}`).catch(() => {});
-        throw error;
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-        activeDownloads = Math.max(0, activeDownloads - 1);
-      }
-      return;
-    }
-
+    prune();
     const query = args.join(" ").trim();
-    if (!query) {
-      await api.reply("Masukkan judul, contoh: *.yta judul lagu*.");
-      return;
-    }
-    if (query.length > 200) {
-      await api.reply("Judul pencarian terlalu panjang (maksimal 200 karakter).");
-      return;
-    }
+    if (!query) return api.reply("Masukkan judul lagu. Contoh: *.yta cruel angel thesis*");
+    if (query.length > 150) return api.reply("Judul pencarian terlalu panjang (maksimal 150 karakter).");
 
     try {
-      await api.reply("🔎 Mencari YouTube…");
-      const result = await run(YTDLP_PATH, ytdlpArgs([
-        "--no-call-home", "--flat-playlist", "--skip-download", "--dump-single-json", `ytsearch${MAX_RESULTS}:${query}`,
-      ]), { timeout: SEARCH_TIMEOUT_MS, maxOutput: 4 * 1024 * 1024 });
-      let search;
-      try { search = JSON.parse(result.stdout); }
-      catch { throw new Error(`yt-dlp tidak menghasilkan JSON pencarian. Output: ${result.stdout.slice(0, 400)}`); }
-      const results = (search.entries || [])
-        .filter((entry) => safeYouTubeUrl(entry) && Number.isFinite(Number(entry.duration)) && Number(entry.duration) > 0 && Number(entry.duration) <= MAX_DURATION_SECONDS)
-        .slice(0, MAX_RESULTS);
-      if (!results.length) throw new Error(`Tidak ada hasil YouTube dengan durasi maksimal ${formatDuration(MAX_DURATION_SECONDS)}. Coba kata kunci lain.`);
+      await api.reply("🔎 Mencari lagu…");
+      const params = new URLSearchParams({ term: query, entity: "song", media: "music", limit: String(MAX_RESULTS) });
+      const response = await fetch(`https://itunes.apple.com/search?${params}`, {
+        headers: { "user-agent": "SupanigaBot/1.0" },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!response.ok) throw new Error(`iTunes Search API merespons HTTP ${response.status}`);
+      const result = await response.json();
+      const results = (result.results || []).filter((item) => typeof item.previewUrl === "string" && /^https:\/\//.test(item.previewUrl)).slice(0, MAX_RESULTS);
+      if (!results.length) return api.reply("Tidak ada lagu dengan preview audio yang tersedia untuk kata kunci itu.");
 
-      pendingSelections.set(key, { results, expiresAt: Date.now() + SELECTION_TTL_MS });
-      const lines = results.map((entry, index) => [
-        `*${index + 1}. ${cleanText(entry.title)}*`,
-        `Channel: ${cleanText(entry.channel || entry.uploader)}`,
-        `Durasi: ${formatDuration(Number(entry.duration))}`,
-        `URL: ${safeYouTubeUrl(entry)}`,
-      ].join("\n"));
-      await api.reply(`${lines.join("\n\n")}\n\nBalas pesan daftar ini dengan nomor 1-${results.length}. Daftar berlaku 10 menit. Hanya audio dengan lisensi yang mengizinkan penggunaan ulang yang dapat diproses.`);
+      const lines = results.map((item, index) => `${index + 1}. *${clean(item.trackName)}*\n   ${clean(item.artistName)} — ${clean(item.collectionName)}\n   Preview resmi ±30 detik`);
+      const sent = await api.reply(`🎵 *Hasil pencarian lagu*\n\n${lines.join("\n\n")}\n\nBalas pesan ini dengan angka 1-${results.length} untuk menerima preview. Preview adalah cuplikan resmi, bukan lagu penuh.`);
+      const messageId = sent?.key?.id;
+      if (!messageId) throw new Error("WhatsApp tidak mengembalikan ID pesan daftar; pemilihan hasil tidak dapat diaktifkan.");
+      pendingSelections.set(selectionKey(event.chatJid, event.senderNumber, messageId), {
+        results,
+        expiresAt: Date.now() + SELECTION_TTL_MS,
+      });
     } catch (error) {
-      const detail = errorDetail(error);
+      const detail = String(error?.message || error).replace(/[\r\n\t]+/g, " ").slice(0, 700);
       console.error(`[yta] ${detail}`);
       await api.reply(`❌ Pencarian YTA gagal: ${detail}`).catch(() => {});
-      throw error;
     }
   },
 };
