@@ -1,7 +1,7 @@
 /**
  * Handler pesan masuk -> eksekusi command.
  */
-import { normalizeMessageContent } from "baileys";
+import { downloadMediaMessage, normalizeMessageContent } from "baileys";
 import { config } from "./config.js";
 import { commands, commandList } from "./commands.js";
 import { usersData, groupsData } from "./database.js";
@@ -53,6 +53,14 @@ function getContextInfo(content) {
   return null;
 }
 
+function mediaEnvelope(rawMessage, key) {
+  if (!rawMessage) return null;
+  const normalized = normalizeMessageContent(rawMessage);
+  const types = ["imageMessage", "videoMessage", "audioMessage", "documentMessage", "stickerMessage"];
+  const type = types.find((name) => normalized?.[name]);
+  return type ? { key, message: rawMessage } : null;
+}
+
 function errorText(error) {
   return String(error?.message || error || "Kesalahan tidak diketahui").replace(/[\r\n\t]+/g, " ").slice(0, 700);
 }
@@ -95,6 +103,15 @@ export async function handleMessage(sock, msg) {
   const ctx = getContextInfo(content);
   const api = createApi(sock, msg, chatJid);
   const quotedMessageId = ctx?.stanzaId || null;
+  const currentMedia = mediaEnvelope(msg.message, msg.key);
+  const quotedMedia = ctx?.quotedMessage && quotedMessageId
+    ? mediaEnvelope(ctx.quotedMessage, {
+        remoteJid: chatJid,
+        id: quotedMessageId,
+        participant: ctx.participant || undefined,
+        fromMe: false,
+      })
+    : null;
   const event = {
     message: msg,
     chatJid,
@@ -108,22 +125,25 @@ export async function handleMessage(sock, msg) {
     groupMeta,
     quotedMessageId,
     replyToBot: false,
+    mediaMessage: currentMedia,
+    quotedMediaMessage: quotedMedia,
   };
 
-  // Match by the quoted message ID tracked by the command. Do not compare
-  // participant JIDs: Baileys may represent the bot with a PN or LID JID.
+  // Route replies to pending PIN/YTA results and the exact Esdeath response
+  // message, without requiring the user to type a command prefix.
   if (!isCommand && quotedMessageId) {
     for (const replyCommand of commandList) {
-      if (typeof replyCommand.hasPendingSelection !== "function") continue;
+      const hasPending = replyCommand.hasPendingSelection || replyCommand.hasPendingReply;
+      if (typeof hasPending !== "function") continue;
       let pending = false;
       try {
-        pending = replyCommand.hasPendingSelection(chatJid, nomor, quotedMessageId);
+        pending = hasPending.call(replyCommand, chatJid, nomor, quotedMessageId);
       } catch (error) {
         log.error(`Gagal memeriksa balasan ${replyCommand.config.name}: ${errorText(error)}`);
       }
       if (!pending) continue;
       try {
-        event.replyToBot = true; // YTA uses this flag after selection has been matched.
+        event.replyToBot = true;
         if (typeof replyCommand.onReply === "function") {
           const handled = await replyCommand.onReply({ api, event, text, quotedMessageId });
           if (handled !== false) return;
@@ -143,10 +163,8 @@ export async function handleMessage(sock, msg) {
   if (!isCommand) return;
   const command = commands.get(commandName);
   const where = isGroup ? `grup "${group?.groupName}" (GID ${group?.gid})` : "chat pribadi";
-  if (!command) {
-    await api.reply(`❔ Command *${prefix}${commandName}* tidak ditemukan.\nKetik *${prefix}menu* untuk melihat daftar command.`);
-    return;
-  }
+  // Unknown commands are ignored to prevent repeated typo/legacy command spam.
+  if (!command) return;
   const cfg = command.config;
   if (!hasPermission(roleLevel, cfg.role)) {
     await api.reply(`⛔ Command ini khusus *${ROLE_NAMES[cfg.role]}* (role ${cfg.role}).`);
@@ -215,6 +233,10 @@ export function createApi(sock, msg, chatJid) {
     },
     async reply(content) {
       return sock.sendMessage(chatJid, toContent(content), { quoted: msg });
+    },
+    async downloadMedia(mediaMessage) {
+      if (!mediaMessage?.message) throw new Error("Pesan media tidak tersedia untuk diunduh.");
+      return downloadMediaMessage(mediaMessage, "buffer");
     },
     async react(emoji) {
       return sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } });
