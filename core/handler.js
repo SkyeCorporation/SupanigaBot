@@ -129,15 +129,16 @@ export async function handleMessage(sock, msg) {
     quotedMediaMessage: quotedMedia,
   };
 
-  // Route replies to pending PIN/YTA results and the exact Esdeath response
-  // message, without requiring the user to type a command prefix.
-  if (!isCommand && quotedMessageId) {
+  // Route plain chat to pending PIN/YTA selections (user just types "1" or
+  // "1, 2, 3", no reply needed) and replies to the exact Esdeath response.
+  if (!isCommand && text) {
     for (const replyCommand of commandList) {
       const hasPending = replyCommand.hasPendingSelection || replyCommand.hasPendingReply;
       if (typeof hasPending !== "function") continue;
+      if (!replyCommand.hasPendingSelection && !quotedMessageId) continue;
       let pending = false;
       try {
-        pending = hasPending.call(replyCommand, chatJid, nomor, quotedMessageId);
+        pending = hasPending.call(replyCommand, chatJid, nomor, quotedMessageId, text);
       } catch (error) {
         log.error(`Gagal memeriksa balasan ${replyCommand.config.name}: ${errorText(error)}`);
       }

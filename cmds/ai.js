@@ -59,7 +59,7 @@ async function respond({ api, event, args = [] }) {
     }
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const systemInstruction = [
     "Kamu adalah Esdeath AI, AI yang diciptakan oleh Luxion.",
