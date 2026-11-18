@@ -3,8 +3,9 @@
  * - `yta <judul>`  : tampilkan 10 hasil YouTube, user cukup ketik angka (tanpa reply).
  * - `yta <link>`   : langsung unduh audio dan kirim ke WhatsApp.
  * Pencarian memakai node module `yt-search`; unduhan memakai yt-dlp (binary resmi,
- * diunduh otomatis saat pertama dipakai) lalu diubah ke MP3 dengan ffmpeg-static agar
- * pasti bisa diputar di WhatsApp. File disimpan sementara di folder bot `tmp/yta/`
+ * diunduh otomatis saat pertama dipakai) lalu diubah ke MP3 dengan ffmpeg agar pasti
+ * bisa diputar di WhatsApp. ffmpeg dicari berurutan: FFMPEG_PATH, @ffmpeg-installer/ffmpeg,
+ * ffmpeg di sistem, lalu unduh otomatis. Bila semuanya gagal, audio dikirim apa adanya (M4A). File disimpan sementara di folder bot `tmp/yta/`
  * dan dihapus setelah terkirim (juga dibersihkan saat bot start).
  */
 const fs = require("node:fs");
@@ -13,7 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const yts = require("yt-search");
-const ffmpegStatic = require("ffmpeg-static");
+const zlib = require("node:zlib");
 
 const MAX_RESULTS = 10;
 const MAX_AUDIO_MB = 50;
@@ -114,12 +115,57 @@ function run(file, args, timeout) {
   });
 }
 
-function ffmpegBinary() {
-  const file = process.env.FFMPEG_PATH || ffmpegStatic;
-  if (!file || (path.isAbsolute(file) && !fs.existsSync(file))) {
-    throw new Error("ffmpeg tidak ditemukan. Jalankan npm install ulang, atau isi FFMPEG_PATH.");
+const FFMPEG_RELEASE = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/";
+let ffmpegPromise = null;
+
+/** true bila file ffmpeg benar-benar bisa dijalankan. */
+function ffmpegWorks(file) {
+  return new Promise((resolve) => {
+    execFile(file, ["-hide_banner", "-version"], { timeout: 15000, windowsHide: true }, (error) => resolve(!error));
+  });
+}
+
+/** Binary siap pakai dari npm (@ffmpeg-installer), tanpa skrip install tambahan. */
+function installerPath() {
+  try {
+    const file = require("@ffmpeg-installer/ffmpeg").path;
+    return file && fs.existsSync(file) ? file : null;
+  } catch { return null; }
+}
+
+async function downloadFfmpeg(target) {
+  const arch = { x64: "x64", arm64: "arm64", ia32: "ia32", arm: "arm" }[process.arch];
+  if (!arch || !["win32", "linux", "darwin"].includes(process.platform)) throw new Error(`Platform ${process.platform}/${process.arch} tidak didukung`);
+  const response = await fetch(`${FFMPEG_RELEASE}ffmpeg-${process.platform}-${arch}.gz`, { redirect: "follow", signal: AbortSignal.timeout(180000) });
+  if (!response.ok) throw new Error(`Gagal mengunduh ffmpeg (HTTP ${response.status})`);
+  const binary = zlib.gunzipSync(Buffer.from(await response.arrayBuffer()));
+  if (binary.length < 5 * 1024 * 1024) throw new Error("File ffmpeg yang diunduh tidak valid.");
+  await fsp.mkdir(BIN_DIR, { recursive: true });
+  const temp = `${target}.${process.pid}.tmp`;
+  await fsp.writeFile(temp, binary, { mode: 0o755 });
+  await fsp.rename(temp, target);
+}
+
+/** Cari ffmpeg yang bisa jalan. Mengembalikan null bila tidak ada (audio dikirim tanpa konversi). */
+async function ffmpegBinary() {
+  if (!ffmpegPromise) {
+    ffmpegPromise = (async () => {
+      const cached = path.join(BIN_DIR, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+      const candidates = [process.env.FFMPEG_PATH, installerPath(), "ffmpeg", fs.existsSync(cached) ? cached : null].filter(Boolean);
+      for (const file of candidates) if (await ffmpegWorks(file)) return file;
+      try {
+        await downloadFfmpeg(cached);
+        if (await ffmpegWorks(cached)) return cached;
+      } catch (error) {
+        console.warn(`[yta] ffmpeg otomatis gagal: ${errorText(error)}`);
+      }
+      console.warn("[yta] ffmpeg tidak tersedia, audio dikirim sebagai M4A tanpa konversi.");
+      return null;
+    })();
+    // Hasil null tidak disimpan permanen, supaya dicoba lagi di permintaan berikutnya.
+    ffmpegPromise.then((file) => { if (!file) ffmpegPromise = null; });
   }
-  return file;
+  return ffmpegPromise;
 }
 
 /**
@@ -128,16 +174,16 @@ function ffmpegBinary() {
  */
 async function downloadAudio(videoId) {
   const binary = await ytdlpBinary();
-  const ffmpeg = ffmpegBinary();
+  const ffmpeg = await ffmpegBinary();
   await fsp.mkdir(WORK_DIR, { recursive: true });
   const dir = await fsp.mkdtemp(path.join(WORK_DIR, `${videoId}-`));
   const cleanup = () => fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
   try {
     const args = [
       "--no-playlist", "--no-warnings", "--no-progress", "--no-part", "--no-cache-dir",
-      "-f", "bestaudio[ext=m4a]/bestaudio",
-      "-x", "--audio-format", "mp3", "--audio-quality", "128K",
-      "--ffmpeg-location", ffmpeg,
+      ...(ffmpeg
+        ? ["-f", "bestaudio[ext=m4a]/bestaudio", "-x", "--audio-format", "mp3", "--audio-quality", "128K", "--ffmpeg-location", ffmpeg]
+        : ["-f", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]"]),
       "--max-filesize", `${MAX_AUDIO_MB}M`,
       "--match-filter", `duration <= ${MAX_DURATION_SEC} & !is_live`,
       "--js-runtimes", `node:${process.execPath}`,
@@ -159,7 +205,8 @@ async function downloadAudio(videoId) {
     const { size } = await fsp.stat(filepath);
     if (!size) throw new Error("File audio kosong.");
     if (size > MAX_AUDIO_MB * 1024 * 1024) throw new Error(`Audio lebih dari ${MAX_AUDIO_MB} MB.`);
-    return { filepath, cleanup, title: clean(title, 120), duration: Math.round(Number(duration)) || 0 };
+    const ext = path.extname(filepath).slice(1).toLowerCase();
+    return { filepath, cleanup, ext, title: clean(title, 120), duration: Math.round(Number(duration)) || 0 };
   } catch (error) {
     await cleanup();
     throw error;
@@ -175,10 +222,12 @@ function formatDuration(seconds) {
 async function sendAudio(api, videoId) {
   await api.reply("Mengunduh audio, mohon tunggu...");
   const result = await downloadAudio(videoId);
-  const fileName = `${clean(result.title, 70).replace(/[\\/:*?"<>|]/g, "_")}.mp3`;
+  const ext = result.ext === "mp3" ? "mp3" : "m4a";
+  const fileName = `${clean(result.title, 70).replace(/[\\/:*?"<>|]/g, "_")}.${ext}`;
   try {
     // Kirim langsung dari file (bukan buffer) supaya tidak menumpuk di memori.
-    const audio = { audio: { url: result.filepath }, mimetype: "audio/mpeg", fileName, ptt: false };
+    const mimetype = ext === "mp3" ? "audio/mpeg" : "audio/mp4";
+    const audio = { audio: { url: result.filepath }, mimetype, fileName, ptt: false };
     if (result.duration) audio.seconds = result.duration;
     await api.sendMessage(audio);
     await api.reply(`${result.title}\nDurasi: ${formatDuration(result.duration)}\nhttps://youtu.be/${videoId}`);
@@ -201,6 +250,7 @@ module.exports = {
   _youtubeId: youtubeId,
   _sendAudio: sendAudio,
   _workDir: WORK_DIR,
+  _ffmpegBinary: ffmpegBinary,
   hasPendingSelection(chatJid, senderNumber, _quotedMessageId, text = "") {
     prune();
     return /^\d{1,2}$/.test(String(text).trim()) && pendingSelections.has(selectionKey(chatJid, senderNumber));

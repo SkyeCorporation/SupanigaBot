@@ -126,28 +126,46 @@ const WATERMARK = "SupanigaMX";
 
 const TILE_W = 280;
 const TILE_H = 372; // potret 3:4 seperti pin Pinterest
-const GAP = 22;
-const PAD_X = 64;
-const PAD_TOP = 56;
-const PAD_BOTTOM = 86; // ruang watermark
-const RADIUS = 24;
+const GAP = 26;
+const PAD_X = 72;
+const PAD_TOP = 64;
+const PAD_BOTTOM = 92; // ruang watermark
+const RADIUS = 20;
 const BADGE = 62;
 
-function badgeSvg(number) {
+// Tema space-tech: tiap kolase memilih palet & tata letak latar secara acak.
+const PALETTES = [
+  { a: "#22d3ee", b: "#d946ef", base1: "#03040c", base2: "#0a0f2e" }, // cyan-magenta
+  { a: "#3b82f6", b: "#a855f7", base1: "#02030a", base2: "#0c0a2a" }, // biru-ungu
+  { a: "#2dd4bf", b: "#84cc16", base1: "#020807", base2: "#06201e" }, // teal-hijau
+  { a: "#f97316", b: "#ec4899", base1: "#08030a", base2: "#24081f" }, // oranye-pink
+  { a: "#38bdf8", b: "#f43f5e", base1: "#03050d", base2: "#170b24" }, // biru-merah
+];
+const rand = (min, max) => min + Math.random() * (max - min);
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
+const f1 = (n) => Math.round(n * 10) / 10;
+
+function badgeSvg(number, theme) {
   const digits = String(number).split("");
-  const glyphW = 40 * 0.62;
+  const glyphW = 40 * 0.58;
   const startX = BADGE / 2 - (digits.length * glyphW) / 2;
   const paths = digits.map((d, i) =>
-    `<path d="${DIGITS[d]}" transform="translate(${startX + i * glyphW} ${BADGE / 2 - 30 * 0.62}) scale(0.62)" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<path d="${DIGITS[d]}" transform="translate(${startX + i * glyphW} ${BADGE / 2 - 30 * 0.58}) scale(0.58)" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`,
   ).join("");
+  const c = BADGE / 2;
+  const hex = Array.from({ length: 6 }, (_, i) => {
+    const ang = (Math.PI / 3) * i - Math.PI / 2;
+    return `${f1(c + (c - 6) * Math.cos(ang))},${f1(c + (c - 6) * Math.sin(ang))}`;
+  }).join(" ");
   return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${BADGE}" height="${BADGE}">` +
-    `<circle cx="${BADGE / 2}" cy="${BADGE / 2}" r="${BADGE / 2 - 3}" fill="#e60023" stroke="#ffffff" stroke-width="4"/>${paths}</svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${BADGE}" height="${BADGE}"><defs>` +
+    `<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${theme.a}"/><stop offset="1" stop-color="${theme.b}"/></linearGradient></defs>` +
+    `<polygon points="${hex}" fill="#050816" fill-opacity="0.82" stroke="url(#g)" stroke-width="3.5" stroke-linejoin="round"/>${paths}</svg>`,
   );
 }
 
 /** Watermark kecil "SupanigaMX" (SVG), tinggi huruf besar = capHeight px. */
-function watermarkSvg(capHeight = 17) {
+function watermarkSvg(theme, capHeight = 17) {
   const k = capHeight / 40;
   const spacing = 5;
   let x = 0;
@@ -165,20 +183,23 @@ function watermarkSvg(capHeight = 17) {
     input: Buffer.from(
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
       `<g transform="translate(4 4) scale(${k})" fill="none" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">` +
-      `<g stroke="#000000" stroke-opacity="0.35" transform="translate(1.5 2)">${paths}</g>` +
+      `<g stroke="${theme.a}" stroke-opacity="0.55" transform="translate(1.5 2)">${paths}</g>` +
       `<g stroke="#ffffff" stroke-opacity="0.82">${paths}</g></g></svg>`,
     ),
   };
 }
 
-async function tileImage(buffer) {
+async function tileImage(buffer, theme) {
   const mask = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${TILE_W}" height="${TILE_H}"><rect width="${TILE_W}" height="${TILE_H}" rx="${RADIUS}" ry="${RADIUS}"/></svg>`);
+  const t = 26; // panjang sudut HUD
   const overlay = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${TILE_W}" height="${TILE_H}"><defs>` +
-    `<linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0.5"/><stop offset="0.3" stop-color="#000" stop-opacity="0"/>` +
-    `<stop offset="0.8" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.25"/></linearGradient></defs>` +
+    `<linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0.55"/><stop offset="0.3" stop-color="#000" stop-opacity="0"/>` +
+    `<stop offset="0.75" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="${theme.base2}" stop-opacity="0.55"/></linearGradient>` +
+    `<linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${theme.a}"/><stop offset="1" stop-color="${theme.b}"/></linearGradient></defs>` +
     `<rect width="${TILE_W}" height="${TILE_H}" fill="url(#t)"/>` +
-    `<rect x="1" y="1" width="${TILE_W - 2}" height="${TILE_H - 2}" rx="${RADIUS - 1}" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="2"/></svg>`,
+    `<rect x="1.5" y="1.5" width="${TILE_W - 3}" height="${TILE_H - 3}" rx="${RADIUS - 1}" fill="none" stroke="url(#b)" stroke-opacity="0.9" stroke-width="3"/>` +
+    `<path d="M${TILE_W - 10 - t} ${TILE_H - 10} H${TILE_W - 10} V${TILE_H - 10 - t}" fill="none" stroke="#ffffff" stroke-opacity="0.75" stroke-width="2.5" stroke-linecap="round"/></svg>`,
   );
   return sharp(buffer)
     .resize(TILE_W, TILE_H, { fit: "cover", position: "attention" })
@@ -187,35 +208,92 @@ async function tileImage(buffer) {
     .toBuffer();
 }
 
-/** Latar dinamis: warna diambil dari foto hasil pencarian, diburamkan dan digelapkan. */
-async function backgroundImage(buffers, width, height, cols, rows) {
-  const scale = 10;
+/** Warna paling dominan dari foto pertama, dipakai sebagai salah satu warna nebula. */
+async function photoColor(buffer) {
+  try {
+    const { dominant } = await sharp(buffer).resize(32, 32).stats();
+    return `rgb(${dominant.r},${dominant.g},${dominant.b})`;
+  } catch { return null; }
+}
+
+/** Nebula lembut: digambar kecil lalu diburamkan & diperbesar supaya halus dan cepat. */
+async function nebulaLayer(width, height, theme, extraColor) {
+  const scale = 8;
   const w = Math.ceil(width / scale);
   const h = Math.ceil(height / scale);
-  const cellW = Math.ceil(w / cols);
-  const cellH = Math.ceil(h / rows);
-  // Semua sel diisi (foto diulang bila kurang) supaya tidak ada bagian latar yang kosong.
-  const sources = Array.from({ length: cols * rows }, (_, i) => buffers[i % buffers.length]);
-  const cells = await Promise.all(sources.map((b) => sharp(b).resize(cellW, cellH, { fit: "cover" }).removeAlpha().toBuffer()));
-  const mosaic = await sharp({ create: { width: w, height: h, channels: 3, background: "#15161c" } })
-    .composite(cells.map((input, i) => ({ input, left: Math.min((i % cols) * cellW, w - cellW), top: Math.min(Math.floor(i / cols) * cellH, h - cellH) })))
-    .png()
-    .toBuffer();
-  const blurred = await sharp(mosaic)
-    .blur(16)
-    .modulate({ brightness: 0.55, saturation: 1.5 })
-    .resize(width, height, { kernel: "cubic" })
-    .blur(10)
-    .png()
-    .toBuffer();
-  const glow = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs>` +
-    `<radialGradient id="v" cx="0.5" cy="0.45" r="0.75"><stop offset="0.45" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.7"/></radialGradient>` +
-    `<linearGradient id="d" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e60023" stop-opacity="0.22"/><stop offset="0.5" stop-color="#e60023" stop-opacity="0"/>` +
-    `<stop offset="1" stop-color="#2b1055" stop-opacity="0.3"/></linearGradient></defs>` +
-    `<rect width="100%" height="100%" fill="url(#d)"/><rect width="100%" height="100%" fill="url(#v)"/></svg>`,
+  const colors = [theme.a, theme.b, theme.b, extraColor || theme.a];
+  const blobs = Array.from({ length: 6 }, (_, i) =>
+    `<ellipse cx="${f1(rand(-0.1, 1.1) * w)}" cy="${f1(rand(-0.1, 0.9) * h)}" rx="${f1(rand(0.14, 0.32) * w)}" ry="${f1(rand(0.1, 0.24) * h)}" ` +
+    `fill="${colors[i % colors.length]}" fill-opacity="${f1(rand(0.14, 0.3))}" transform="rotate(${Math.round(rand(-35, 35))} ${w / 2} ${h / 2})"/>`,
+  ).join("");
+  const svg = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><defs><linearGradient id="bg" x1="0" y1="0" x2="${f1(rand(0.3, 1))}" y2="1">` +
+    `<stop offset="0" stop-color="${theme.base1}"/><stop offset="0.6" stop-color="${theme.base2}"/><stop offset="1" stop-color="${theme.base1}"/></linearGradient></defs>` +
+    `<rect width="100%" height="100%" fill="url(#bg)"/>${blobs}</svg>`,
   );
-  return sharp(blurred).composite([{ input: glow }]).png().toBuffer();
+  return sharp(svg).blur(14).resize(width, height, { kernel: "cubic" }).blur(6).png().toBuffer();
+}
+
+/** Bintang, planet, lantai grid perspektif, dan bingkai HUD (tajam, resolusi penuh). */
+function techLayer(width, height, theme) {
+  const parts = [];
+  // Bintang kecil + beberapa bintang terang berkilau.
+  for (let i = 0; i < Math.round((width * height) / 4200); i++) {
+    parts.push(`<circle cx="${f1(rand(0, width))}" cy="${f1(rand(0, height * 0.8))}" r="${f1(rand(0.4, 1.5))}" fill="#ffffff" fill-opacity="${f1(rand(0.25, 0.95))}"/>`);
+  }
+  for (let i = 0; i < 7; i++) {
+    const x = f1(rand(0, width)), y = f1(rand(0, height * 0.7)), l = f1(rand(5, 11));
+    parts.push(`<g stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" opacity="${f1(rand(0.6, 1))}"><path d="M${x - l} ${y} H${x + l} M${x} ${y - l} V${y + l}"/></g><circle cx="${x}" cy="${y}" r="2" fill="#ffffff"/>`);
+  }
+  // Planet gelap dengan sinar tepi & cincin di salah satu sudut atas.
+  const left = Math.random() < 0.5;
+  const pr = rand(0.13, 0.19) * height;
+  const px = left ? rand(0.05, 0.35) * pr : width - rand(0.05, 0.35) * pr;
+  const py = rand(0.05, 0.35) * pr;
+  const lx = left ? 0.85 : 0.15; // arah cahaya ke tengah kolase
+  const tilt = left ? -16 : 16;
+  parts.push(
+    `<defs><radialGradient id="pl" cx="${lx}" cy="0.85" r="1.05"><stop offset="0" stop-color="${theme.a}" stop-opacity="0.9"/>` +
+    `<stop offset="0.35" stop-color="${theme.b}" stop-opacity="0.45"/><stop offset="0.75" stop-color="${theme.base2}"/><stop offset="1" stop-color="${theme.base1}"/></radialGradient>` +
+    `<filter id="hz" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="10"/></filter>` +
+    `<linearGradient id="fl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${theme.a}" stop-opacity="0"/><stop offset="1" stop-color="${theme.a}" stop-opacity="0.55"/></linearGradient></defs>`,
+    `<circle cx="${f1(px)}" cy="${f1(py)}" r="${f1(pr + 6)}" fill="none" stroke="${theme.a}" stroke-opacity="0.55" stroke-width="10" filter="url(#hz)"/>`,
+    `<circle cx="${f1(px)}" cy="${f1(py)}" r="${f1(pr)}" fill="url(#pl)"/>`,
+    `<ellipse cx="${f1(px)}" cy="${f1(py)}" rx="${f1(pr * 1.8)}" ry="${f1(pr * 0.3)}" fill="none" stroke="${theme.a}" stroke-opacity="0.6" stroke-width="2" transform="rotate(${tilt} ${f1(px)} ${f1(py)})"/>`,
+    `<ellipse cx="${f1(px)}" cy="${f1(py)}" rx="${f1(pr * 2.05)}" ry="${f1(pr * 0.36)}" fill="none" stroke="${theme.b}" stroke-opacity="0.35" stroke-width="1.2" transform="rotate(${tilt} ${f1(px)} ${f1(py)})"/>`,
+  );
+  // Lantai grid perspektif ala sci-fi.
+  const horizon = height * 0.72;
+  const vx = width * rand(0.4, 0.6);
+  const grid = [];
+  for (let i = -14; i <= 14; i++) grid.push(`M${f1(vx)} ${f1(horizon)} L${f1(vx + i * width * 0.12)} ${height}`);
+  for (let k = 1; k <= 9; k++) {
+    const y = horizon + (height - horizon) * Math.pow(k / 9, 2.2);
+    grid.push(`M0 ${f1(y)} H${width}`);
+  }
+  parts.push(`<path d="${grid.join(" ")}" stroke="url(#fl)" stroke-width="1.4" fill="none"/>`);
+  parts.push(`<rect x="0" y="${f1(horizon - 1)}" width="${width}" height="2" fill="${theme.a}" fill-opacity="0.45"/>`);
+  // Jalur sirkuit di sisi kiri & kanan.
+  for (let i = 0; i < 5; i++) {
+    const side = i % 2 === 0 ? 0 : 1;
+    const y = f1(rand(0.12, 0.85) * height);
+    const x1 = side ? width - 6 : 6;
+    const dx = side ? -1 : 1;
+    const run = rand(18, 40), bend = rand(10, 26) * (Math.random() < 0.5 ? -1 : 1);
+    const ex = f1(x1 + dx * (run + 22)), ey = f1(y + bend);
+    parts.push(`<path d="M${x1} ${y} H${f1(x1 + dx * run)} L${ex} ${ey}" fill="none" stroke="${pick([theme.a, theme.b])}" stroke-opacity="0.7" stroke-width="1.6"/>` +
+      `<circle cx="${ex}" cy="${ey}" r="3" fill="none" stroke="${theme.a}" stroke-width="1.6"/>`);
+  }
+  // Bingkai HUD: sudut, garis skala atas, dan bar data kecil.
+  const m = 18, c = 40;
+  parts.push(`<path d="M${m} ${m + c} V${m} H${m + c} M${width - m - c} ${m} H${width - m} V${m + c} M${m} ${height - m - c} V${height - m} H${m + c} M${width - m - c} ${height - m} H${width - m} V${height - m - c}" fill="none" stroke="${theme.a}" stroke-opacity="0.85" stroke-width="2.5" stroke-linecap="round"/>`);
+  const ticks = [];
+  for (let x = m + c + 24; x < width - m - c - 24; x += 14) ticks.push(`M${x} ${m} V${m + ((x / 14) % 5 === 0 ? 9 : 5)}`);
+  parts.push(`<path d="${ticks.join(" ")}" stroke="#ffffff" stroke-opacity="0.28" stroke-width="1"/>`);
+  for (let i = 0; i < 6; i++) {
+    parts.push(`<rect x="${m + 10}" y="${height - m - 30 + i * 0}" width="${f1(rand(8, 46))}" height="3" rx="1.5" fill="${pick([theme.a, theme.b])}" fill-opacity="0.75" transform="translate(${i * 0} ${-i * 7})"/>`);
+  }
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${parts.join("")}</svg>`);
 }
 
 /** Jumlah kolom mengikuti jumlah foto: 1-4 satu baris, 5-6 jadi 3 kolom, 7-8 jadi 4 kolom. */
@@ -224,35 +302,43 @@ function columnsFor(count) {
   return count <= 6 ? 3 : 4;
 }
 
-/** Satu gambar kolase: tata letak dinamis, latar dari warna foto, bayangan, lencana nomor, watermark. */
+/** Satu gambar kolase tema space-tech: latar acak, foto bernomor bercahaya neon, watermark. */
 async function renderGrid(buffers) {
+  const theme = pick(PALETTES);
   const count = buffers.length;
   const cols = columnsFor(count);
   const rows = Math.ceil(count / cols);
   const width = PAD_X * 2 + cols * TILE_W + (cols - 1) * GAP;
   const height = PAD_TOP + PAD_BOTTOM + rows * TILE_H + (rows - 1) * GAP;
-  const [background, tiles] = await Promise.all([backgroundImage(buffers, width, height, cols, rows), Promise.all(buffers.map(tileImage))]);
+  const [nebula, tiles] = await Promise.all([
+    photoColor(buffers[0]).then((color) => nebulaLayer(width, height, theme, color)),
+    Promise.all(buffers.map((b) => tileImage(b, theme))),
+  ]);
   const positions = tiles.map((_, i) => {
     const row = Math.floor(i / cols);
     const inRow = Math.min(cols, count - row * cols);
     const offset = ((cols - inRow) * (TILE_W + GAP)) / 2; // baris terakhir yang tidak penuh dibuat di tengah
     return { left: Math.round(PAD_X + offset + (i % cols) * (TILE_W + GAP)), top: PAD_TOP + row * (TILE_H + GAP) };
   });
-  const shadow = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs><filter id="s" x="-20%" y="-20%" width="140%" height="140%">` +
-    `<feGaussianBlur stdDeviation="14"/></filter></defs><g filter="url(#s)" fill="#000" fill-opacity="0.6">` +
-    positions.map((p) => `<rect x="${p.left}" y="${p.top + 12}" width="${TILE_W}" height="${TILE_H}" rx="${RADIUS}"/>`).join("") +
+  // Cahaya neon di belakang setiap foto + bayangan gelap di bawahnya.
+  const glow = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs>` +
+    `<filter id="s" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="16"/></filter>` +
+    `<linearGradient id="n" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${theme.a}"/><stop offset="1" stop-color="${theme.b}"/></linearGradient></defs>` +
+    `<g filter="url(#s)">` +
+    positions.map((p) => `<rect x="${p.left}" y="${p.top + 14}" width="${TILE_W}" height="${TILE_H}" rx="${RADIUS}" fill="#000" fill-opacity="0.7"/>` +
+      `<rect x="${p.left - 4}" y="${p.top - 4}" width="${TILE_W + 8}" height="${TILE_H + 8}" rx="${RADIUS + 4}" fill="none" stroke="url(#n)" stroke-width="10" stroke-opacity="0.75"/>`).join("") +
     `</g></svg>`,
   );
-  const mark = watermarkSvg();
-  const layers = [{ input: shadow, left: 0, top: 0 }];
+  const mark = watermarkSvg(theme);
+  const layers = [{ input: techLayer(width, height, theme), left: 0, top: 0 }, { input: glow, left: 0, top: 0 }];
   tiles.forEach((tile, i) => {
     const { left, top } = positions[i];
     layers.push({ input: tile, left, top });
-    layers.push({ input: badgeSvg(i + 1), left: left + 14, top: top + 14 });
+    layers.push({ input: badgeSvg(i + 1, theme), left: left + 12, top: top + 12 });
   });
   layers.push({ input: mark.input, left: width - PAD_X - mark.width + 4, top: height - Math.round(PAD_BOTTOM / 2) - Math.round(mark.height / 2) + 4 });
-  return sharp(background)
+  return sharp(nebula)
     .composite(layers)
     .jpeg({ quality: 88, mozjpeg: true })
     .toBuffer();
