@@ -110,17 +110,18 @@ const DIGITS = {
   8: "M20 29 C12 29 11 23 11 19 C11 12 15 8 20 8 C25 8 29 12 29 19 C29 23 28 29 20 29 C11 29 9 36 9 41 C9 48 14 53 20 53 C26 53 31 48 31 41 C31 36 29 29 20 29 Z",
   9: "M31 22 C31 27 26 32 20 32 C13 32 9 27 9 20 C9 13 14 8 20 8 C27 8 31 13 31 22 C31 38 27 52 12 51",
 };
-// Huruf watermark "SupanigaMX", juga digambar sebagai garis (tinggi huruf besar 0-40, garis dasar 40).
+// Huruf watermark "SupanigaMX": monoline geometris dengan sudut terpancung,
+// digambar sebagai vektor agar bentuknya sama di semua server tanpa font eksternal.
 const LETTERS = {
-  S: { w: 30, d: "M27 8 C24 3 19 2 15 2 C8 2 4 6 4 11 C4 23 28 17 28 30 C28 36 22 40 15 40 C10 40 5 38 3 34" },
-  u: { w: 26, d: "M4 14 V30 C4 37 8 40 13 40 C19 40 23 36 23 30 M23 14 V40" },
-  p: { w: 28, d: "M4 14 V52 M4 27 C4 19 9 14 15 14 C21 14 25 20 25 27 C25 34 21 40 15 40 C9 40 4 35 4 27" },
-  a: { w: 27, d: "M23 14 V40 M23 27 C23 19 18 14 12.5 14 C7 14 3 20 3 27 C3 34 7 40 12.5 40 C18 40 23 35 23 27" },
-  n: { w: 26, d: "M4 40 V14 M4 26 C4 18 9 14 13.5 14 C19 14 23 18 23 26 V40" },
-  i: { w: 9, d: "M4.5 18 V40 M4.5 6 V6.5" },
-  g: { w: 27, d: "M23 14 V44 C23 51 18 54 12.5 54 C8 54 5 52.5 3.5 50 M23 27 C23 19 18 14 12.5 14 C7 14 3 20 3 27 C3 34 7 40 12.5 40 C18 40 23 35 23 27" },
-  M: { w: 38, d: "M4 40 V2 L19 28 L34 2 V40" },
-  X: { w: 31, d: "M4 2 L27 40 M27 2 L4 40" },
+  S: { w: 31, d: "M28 4 H11 L4 11 V18 L11 23 H21 L27 28 V34 L21 40 H4 M28 4 V10 M4 34 V40" },
+  u: { w: 29, d: "M4 13 V32 L11 39 H19 L25 33 V13 M25 13 V39" },
+  p: { w: 30, d: "M4 52 V13 H20 L26 19 V31 L20 37 H4" },
+  a: { w: 29, d: "M25 39 V13 H11 L4 20 V32 L11 39 H18 L25 33" },
+  n: { w: 29, d: "M4 39 V13 M4 22 L11 13 H19 L25 19 V39" },
+  i: { w: 10, d: "M5 17 V39 M5 5 V10" },
+  g: { w: 29, d: "M25 44 V13 H11 L4 20 V32 L11 39 H18 L25 33 M25 44 L19 52 H5" },
+  M: { w: 39, d: "M3 40 V3 L19 25 L35 3 V40 M3 3 H9 M29 3 H35" },
+  X: { w: 34, d: "M3 3 L30 40 M30 3 L3 40 M3 3 H10 M24 40 H30" },
 };
 const WATERMARK = "SupanigaMX";
 
@@ -164,27 +165,40 @@ function badgeSvg(number, theme) {
   );
 }
 
-/** Watermark kecil "SupanigaMX" (SVG), tinggi huruf besar = capHeight px. */
-function watermarkSvg(theme, capHeight = 17) {
+/** Watermark kecil "SupanigaMX" bergaya logo HUD, tanpa ketergantungan font sistem. */
+function watermarkSvg(theme, capHeight = 18) {
   const k = capHeight / 40;
-  const spacing = 5;
+  const spacing = 4;
+  const padX = 13;
+  const padY = 8;
   let x = 0;
-  const paths = WATERMARK.split("").map((ch) => {
+  let paths = "";
+  let accentPaths = "";
+  WATERMARK.split("").forEach((ch, index) => {
     const glyph = LETTERS[ch];
-    const out = `<path d="${glyph.d}" transform="translate(${x} 0)"/>`;
+    const path = `<path d="${glyph.d}" transform="translate(${x} 0)"/>`;
+    if (index >= WATERMARK.length - 2) accentPaths += path;
+    else paths += path;
     x += glyph.w + spacing;
-    return out;
-  }).join("");
-  const width = Math.ceil((x - spacing) * k) + 8;
-  const height = Math.ceil(56 * k) + 8;
+  });
+  const textWidth = (x - spacing) * k;
+  const width = Math.ceil(textWidth) + padX * 2 + 14;
+  const height = Math.ceil(54 * k) + padY * 2;
+  const textX = padX + 7;
   return {
     width,
     height,
     input: Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
-      `<g transform="translate(4 4) scale(${k})" fill="none" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">` +
-      `<g stroke="${theme.a}" stroke-opacity="0.55" transform="translate(1.5 2)">${paths}</g>` +
-      `<g stroke="#ffffff" stroke-opacity="0.82">${paths}</g></g></svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs>` +
+      `<linearGradient id="wm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="0.55" stop-color="${theme.a}"/><stop offset="1" stop-color="${theme.b}"/></linearGradient>` +
+      `<filter id="wg" x="-30%" y="-40%" width="160%" height="180%"><feGaussianBlur stdDeviation="2.2"/></filter></defs>` +
+      `<path d="M9 1 H${width - 9} L${width - 1} 9 V${height - 9} L${width - 9} ${height - 1} H9 L1 ${height - 9} V9 Z" fill="#03040c" fill-opacity="0.82" stroke="${theme.a}" stroke-opacity="0.48" stroke-width="1"/>` +
+      `<path d="M7 7 H27 M${width - 27} ${height - 7} H${width - 7}" stroke="url(#wm)" stroke-width="2"/>` +
+      `<g transform="translate(${textX} ${padY}) scale(${k})" fill="none" stroke-width="5.2" stroke-linecap="square" stroke-linejoin="bevel">` +
+      `<g stroke="#000000" stroke-opacity="0.9" stroke-width="9">${paths}${accentPaths}</g>` +
+      `<g stroke="url(#wm)" stroke-opacity="0.7" filter="url(#wg)">${paths}${accentPaths}</g>` +
+      `<g stroke="url(#wm)">${paths}</g><g stroke="${theme.b}">${accentPaths}</g></g>` +
+      `<circle cx="7" cy="${height / 2}" r="2" fill="${theme.a}"/></svg>`,
     ),
   };
 }
