@@ -8,3 +8,4 @@ database/*.db
 database/*.db-*
 historyAI.json
 historyAI.json.tmp
+tmp/

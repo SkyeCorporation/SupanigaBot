@@ -3,3 +3,4 @@ session
 database/*.db*
 .git
 .env
+tmp

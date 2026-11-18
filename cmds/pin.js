@@ -110,9 +110,27 @@ const DIGITS = {
   8: "M20 29 C12 29 11 23 11 19 C11 12 15 8 20 8 C25 8 29 12 29 19 C29 23 28 29 20 29 C11 29 9 36 9 41 C9 48 14 53 20 53 C26 53 31 48 31 41 C31 36 29 29 20 29 Z",
   9: "M31 22 C31 27 26 32 20 32 C13 32 9 27 9 20 C9 13 14 8 20 8 C27 8 31 13 31 22 C31 38 27 52 12 51",
 };
-const TILE = 300;
-const GAP = 14;
-const PAD = 22;
+// Huruf watermark "SupanigaMX", juga digambar sebagai garis (tinggi huruf besar 0-40, garis dasar 40).
+const LETTERS = {
+  S: { w: 30, d: "M27 8 C24 3 19 2 15 2 C8 2 4 6 4 11 C4 23 28 17 28 30 C28 36 22 40 15 40 C10 40 5 38 3 34" },
+  u: { w: 26, d: "M4 14 V30 C4 37 8 40 13 40 C19 40 23 36 23 30 M23 14 V40" },
+  p: { w: 28, d: "M4 14 V52 M4 27 C4 19 9 14 15 14 C21 14 25 20 25 27 C25 34 21 40 15 40 C9 40 4 35 4 27" },
+  a: { w: 27, d: "M23 14 V40 M23 27 C23 19 18 14 12.5 14 C7 14 3 20 3 27 C3 34 7 40 12.5 40 C18 40 23 35 23 27" },
+  n: { w: 26, d: "M4 40 V14 M4 26 C4 18 9 14 13.5 14 C19 14 23 18 23 26 V40" },
+  i: { w: 9, d: "M4.5 18 V40 M4.5 6 V6.5" },
+  g: { w: 27, d: "M23 14 V44 C23 51 18 54 12.5 54 C8 54 5 52.5 3.5 50 M23 27 C23 19 18 14 12.5 14 C7 14 3 20 3 27 C3 34 7 40 12.5 40 C18 40 23 35 23 27" },
+  M: { w: 38, d: "M4 40 V2 L19 28 L34 2 V40" },
+  X: { w: 31, d: "M4 2 L27 40 M27 2 L4 40" },
+};
+const WATERMARK = "SupanigaMX";
+
+const TILE_W = 280;
+const TILE_H = 372; // potret 3:4 seperti pin Pinterest
+const GAP = 22;
+const PAD_X = 64;
+const PAD_TOP = 56;
+const PAD_BOTTOM = 86; // ruang watermark
+const RADIUS = 24;
 const BADGE = 62;
 
 function badgeSvg(number) {
@@ -128,35 +146,113 @@ function badgeSvg(number) {
   );
 }
 
+/** Watermark kecil "SupanigaMX" (SVG), tinggi huruf besar = capHeight px. */
+function watermarkSvg(capHeight = 17) {
+  const k = capHeight / 40;
+  const spacing = 5;
+  let x = 0;
+  const paths = WATERMARK.split("").map((ch) => {
+    const glyph = LETTERS[ch];
+    const out = `<path d="${glyph.d}" transform="translate(${x} 0)"/>`;
+    x += glyph.w + spacing;
+    return out;
+  }).join("");
+  const width = Math.ceil((x - spacing) * k) + 8;
+  const height = Math.ceil(56 * k) + 8;
+  return {
+    width,
+    height,
+    input: Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+      `<g transform="translate(4 4) scale(${k})" fill="none" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">` +
+      `<g stroke="#000000" stroke-opacity="0.35" transform="translate(1.5 2)">${paths}</g>` +
+      `<g stroke="#ffffff" stroke-opacity="0.82">${paths}</g></g></svg>`,
+    ),
+  };
+}
+
 async function tileImage(buffer) {
-  const mask = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${TILE}" height="${TILE}"><rect width="${TILE}" height="${TILE}" rx="22" ry="22"/></svg>`);
-  const shade = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${TILE}" height="${TILE}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">` +
-    `<stop offset="0" stop-color="#000" stop-opacity="0.45"/><stop offset="0.35" stop-color="#000" stop-opacity="0"/></linearGradient></defs>` +
-    `<rect width="${TILE}" height="${TILE}" fill="url(#g)"/></svg>`,
+  const mask = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${TILE_W}" height="${TILE_H}"><rect width="${TILE_W}" height="${TILE_H}" rx="${RADIUS}" ry="${RADIUS}"/></svg>`);
+  const overlay = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${TILE_W}" height="${TILE_H}"><defs>` +
+    `<linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0.5"/><stop offset="0.3" stop-color="#000" stop-opacity="0"/>` +
+    `<stop offset="0.8" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.25"/></linearGradient></defs>` +
+    `<rect width="${TILE_W}" height="${TILE_H}" fill="url(#t)"/>` +
+    `<rect x="1" y="1" width="${TILE_W - 2}" height="${TILE_H - 2}" rx="${RADIUS - 1}" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="2"/></svg>`,
   );
   return sharp(buffer)
-    .resize(TILE, TILE, { fit: "cover", position: "centre" })
-    .composite([{ input: shade }, { input: mask, blend: "dest-in" }])
+    .resize(TILE_W, TILE_H, { fit: "cover", position: "attention" })
+    .composite([{ input: overlay }, { input: mask, blend: "dest-in" }])
     .png()
     .toBuffer();
 }
 
-/** Satu gambar kolase: maksimal 4 kolom, tiap foto diberi lencana nomor. */
+/** Latar dinamis: warna diambil dari foto hasil pencarian, diburamkan dan digelapkan. */
+async function backgroundImage(buffers, width, height, cols, rows) {
+  const scale = 10;
+  const w = Math.ceil(width / scale);
+  const h = Math.ceil(height / scale);
+  const cellW = Math.ceil(w / cols);
+  const cellH = Math.ceil(h / rows);
+  // Semua sel diisi (foto diulang bila kurang) supaya tidak ada bagian latar yang kosong.
+  const sources = Array.from({ length: cols * rows }, (_, i) => buffers[i % buffers.length]);
+  const cells = await Promise.all(sources.map((b) => sharp(b).resize(cellW, cellH, { fit: "cover" }).removeAlpha().toBuffer()));
+  const mosaic = await sharp({ create: { width: w, height: h, channels: 3, background: "#15161c" } })
+    .composite(cells.map((input, i) => ({ input, left: Math.min((i % cols) * cellW, w - cellW), top: Math.min(Math.floor(i / cols) * cellH, h - cellH) })))
+    .png()
+    .toBuffer();
+  const blurred = await sharp(mosaic)
+    .blur(16)
+    .modulate({ brightness: 0.55, saturation: 1.5 })
+    .resize(width, height, { kernel: "cubic" })
+    .blur(10)
+    .png()
+    .toBuffer();
+  const glow = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs>` +
+    `<radialGradient id="v" cx="0.5" cy="0.45" r="0.75"><stop offset="0.45" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.7"/></radialGradient>` +
+    `<linearGradient id="d" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e60023" stop-opacity="0.22"/><stop offset="0.5" stop-color="#e60023" stop-opacity="0"/>` +
+    `<stop offset="1" stop-color="#2b1055" stop-opacity="0.3"/></linearGradient></defs>` +
+    `<rect width="100%" height="100%" fill="url(#d)"/><rect width="100%" height="100%" fill="url(#v)"/></svg>`,
+  );
+  return sharp(blurred).composite([{ input: glow }]).png().toBuffer();
+}
+
+/** Jumlah kolom mengikuti jumlah foto: 1-4 satu baris, 5-6 jadi 3 kolom, 7-8 jadi 4 kolom. */
+function columnsFor(count) {
+  if (count <= 4) return count;
+  return count <= 6 ? 3 : 4;
+}
+
+/** Satu gambar kolase: tata letak dinamis, latar dari warna foto, bayangan, lencana nomor, watermark. */
 async function renderGrid(buffers) {
-  const cols = Math.min(4, buffers.length);
-  const rows = Math.ceil(buffers.length / 4);
-  const width = PAD * 2 + cols * TILE + (cols - 1) * GAP;
-  const height = PAD * 2 + rows * TILE + (rows - 1) * GAP;
-  const tiles = await Promise.all(buffers.map(tileImage));
-  const layers = [];
-  tiles.forEach((tile, i) => {
-    const left = PAD + (i % 4) * (TILE + GAP);
-    const top = PAD + Math.floor(i / 4) * (TILE + GAP);
-    layers.push({ input: tile, left, top });
-    layers.push({ input: badgeSvg(i + 1), left: left + 12, top: top + 12 });
+  const count = buffers.length;
+  const cols = columnsFor(count);
+  const rows = Math.ceil(count / cols);
+  const width = PAD_X * 2 + cols * TILE_W + (cols - 1) * GAP;
+  const height = PAD_TOP + PAD_BOTTOM + rows * TILE_H + (rows - 1) * GAP;
+  const [background, tiles] = await Promise.all([backgroundImage(buffers, width, height, cols, rows), Promise.all(buffers.map(tileImage))]);
+  const positions = tiles.map((_, i) => {
+    const row = Math.floor(i / cols);
+    const inRow = Math.min(cols, count - row * cols);
+    const offset = ((cols - inRow) * (TILE_W + GAP)) / 2; // baris terakhir yang tidak penuh dibuat di tengah
+    return { left: Math.round(PAD_X + offset + (i % cols) * (TILE_W + GAP)), top: PAD_TOP + row * (TILE_H + GAP) };
   });
-  return sharp({ create: { width, height, channels: 3, background: "#111318" } })
+  const shadow = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs><filter id="s" x="-20%" y="-20%" width="140%" height="140%">` +
+    `<feGaussianBlur stdDeviation="14"/></filter></defs><g filter="url(#s)" fill="#000" fill-opacity="0.6">` +
+    positions.map((p) => `<rect x="${p.left}" y="${p.top + 12}" width="${TILE_W}" height="${TILE_H}" rx="${RADIUS}"/>`).join("") +
+    `</g></svg>`,
+  );
+  const mark = watermarkSvg();
+  const layers = [{ input: shadow, left: 0, top: 0 }];
+  tiles.forEach((tile, i) => {
+    const { left, top } = positions[i];
+    layers.push({ input: tile, left, top });
+    layers.push({ input: badgeSvg(i + 1), left: left + 14, top: top + 14 });
+  });
+  layers.push({ input: mark.input, left: width - PAD_X - mark.width + 4, top: height - Math.round(PAD_BOTTOM / 2) - Math.round(mark.height / 2) + 4 });
+  return sharp(background)
     .composite(layers)
     .jpeg({ quality: 88, mozjpeg: true })
     .toBuffer();
