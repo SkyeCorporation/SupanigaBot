@@ -2,8 +2,9 @@
  * YTA — YouTube audio.
  * - `yta <judul>`  : tampilkan 10 hasil YouTube, user cukup ketik angka (tanpa reply).
  * - `yta <link>`   : langsung unduh audio dan kirim ke WhatsApp.
- * Pencarian memakai node module `yt-search`; unduhan memakai yt-dlp (binary resmi,
- * diunduh otomatis saat pertama dipakai) lalu diubah ke MP3 dengan ffmpeg agar pasti
+ * - `yta cek`      : tampilkan status yt-dlp/ffmpeg di hosting.
+ * Pencarian memakai node module `yt-search`; unduhan memakai yt-dlp (YTDLP_PATH, binary resmi
+ * yang diunduh otomatis, yt-dlp sistem, atau versi Python) lalu diubah ke MP3 dengan ffmpeg agar pasti
  * bisa diputar di WhatsApp. ffmpeg dicari berurutan: FFMPEG_PATH, @ffmpeg-installer/ffmpeg,
  * ffmpeg di sistem, lalu unduh otomatis. Bila semuanya gagal, audio dikirim apa adanya (M4A). File disimpan sementara di folder bot `tmp/yta/`
  * dan dihapus setelah terkirim (juga dibersihkan saat bot start).
@@ -23,18 +24,30 @@ const SELECTION_TTL_MS = 10 * 60 * 1000;
 const BINARY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const pendingSelections = new Map();
 
-const BIN_DIR = path.join(os.homedir(), ".cache", "supanigabot");
-const WORK_DIR = path.join(__dirname, "..", "tmp", "yta");
+const YTA_VERSION = "2026.11.18";
+const ROOT_DIR = path.join(__dirname, "..");
+const WORK_DIR = path.join(ROOT_DIR, "tmp", "yta");
+// Folder sementara untuk proses yt-dlp sendiri (dipakai saat binary mengekstrak dirinya),
+// supaya tidak bergantung pada /tmp hosting yang bisa penuh atau dikunci.
+const PROC_TMP = path.join(ROOT_DIR, "tmp", "yta-proc");
 // Sisa unduhan lama (mis. bot mati di tengah unduhan) dibuang saat command dimuat.
 // Hanya yang lebih dari 1 jam, supaya reload tidak menghapus unduhan yang sedang jalan.
-try {
-  for (const name of fs.readdirSync(WORK_DIR)) {
-    const target = path.join(WORK_DIR, name);
-    if (Date.now() - fs.statSync(target).mtimeMs > 60 * 60 * 1000) fs.rmSync(target, { recursive: true, force: true });
-  }
-} catch {}
+for (const dir of [WORK_DIR, PROC_TMP]) {
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const target = path.join(dir, name);
+      if (Date.now() - fs.statSync(target).mtimeMs > 60 * 60 * 1000) fs.rmSync(target, { recursive: true, force: true });
+    }
+  } catch {}
+}
 const RELEASE = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
-let binaryPromise = null;
+const FFMPEG_RELEASE = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/";
+// Urutan client YouTube yang dicoba (null = bawaan yt-dlp).
+const PLAYER_CLIENTS = [null, "web_embedded", "tv_simply"];
+const EXE = process.platform === "win32" ? ".exe" : "";
+let binDirPromise = null;
+let ytdlpPromise = null;
+let ffmpegPromise = null;
 
 function selectionKey(chatJid, senderNumber) {
   return `${chatJid}:${senderNumber}`;
@@ -63,107 +76,204 @@ function youtubeId(input) {
   return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
 }
 
-function releaseAsset() {
-  if (process.platform === "win32") return "yt-dlp.exe";
-  if (process.platform === "darwin") return "yt-dlp_macos";
-  if (process.platform === "linux") return process.arch === "arm64" ? "yt-dlp_linux_aarch64" : "yt-dlp_linux";
-  throw new Error(`Platform ${process.platform}/${process.arch} tidak didukung yt-dlp otomatis. Isi YTDLP_PATH.`);
+/** Folder binary: ~/.cache/supanigabot, atau tmp/bin di folder bot bila home tidak bisa ditulis. */
+function binDir() {
+  if (!binDirPromise) {
+    binDirPromise = (async () => {
+      for (const dir of [path.join(os.homedir(), ".cache", "supanigabot"), path.join(ROOT_DIR, "tmp", "bin")]) {
+        try {
+          await fsp.mkdir(dir, { recursive: true });
+          await fsp.access(dir, fs.constants.W_OK);
+          return dir;
+        } catch {}
+      }
+      throw new Error("Tidak ada folder yang bisa ditulis untuk menyimpan yt-dlp/ffmpeg.");
+    })().catch((error) => { binDirPromise = null; throw error; });
+  }
+  return binDirPromise;
 }
 
-async function downloadBinary(target) {
-  const response = await fetch(RELEASE + releaseAsset(), { redirect: "follow", signal: AbortSignal.timeout(120000) });
-  if (!response.ok) throw new Error(`Gagal mengunduh yt-dlp (HTTP ${response.status})`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length < 1024 * 1024) throw new Error("File yt-dlp yang diunduh tidak valid.");
-  await fsp.mkdir(BIN_DIR, { recursive: true });
+function procEnv() {
+  try { fs.mkdirSync(PROC_TMP, { recursive: true }); } catch {}
+  return { ...process.env, TMPDIR: PROC_TMP, TMP: PROC_TMP, TEMP: PROC_TMP, PYTHONUTF8: "1" };
+}
+
+/** Jalankan program; true bila keluar normal. */
+function works(file, args) {
+  return new Promise((resolve) => {
+    execFile(file, args, { timeout: 60000, windowsHide: true, env: procEnv() }, (error, stdout) => resolve(error ? null : String(stdout).trim() || "ok"));
+  });
+}
+
+/** Pastikan file bisa dieksekusi (npm kadang memasang binary tanpa izin eksekusi). */
+function ensureExecutable(file) {
+  if (process.platform === "win32") return;
+  try { fs.accessSync(file, fs.constants.X_OK); } catch { try { fs.chmodSync(file, 0o755); } catch {} }
+}
+
+async function download(url, target, minBytes, gunzip = false) {
+  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(240000) });
+  if (!response.ok) throw new Error(`HTTP ${response.status} saat mengunduh ${path.basename(target)}`);
+  let buffer = Buffer.from(await response.arrayBuffer());
+  if (gunzip) buffer = zlib.gunzipSync(buffer);
+  if (buffer.length < minBytes) throw new Error(`File ${path.basename(target)} yang diunduh tidak valid.`);
   const temp = `${target}.${process.pid}.tmp`;
   await fsp.writeFile(temp, buffer, { mode: 0o755 });
   await fsp.rename(temp, target);
+  ensureExecutable(target);
 }
 
-/** Pakai YTDLP_PATH bila diisi, kalau tidak unduh binary resmi ke ~/.cache/supanigabot. */
-async function ytdlpBinary() {
-  if (process.env.YTDLP_PATH) return process.env.YTDLP_PATH;
-  if (!binaryPromise) {
-    binaryPromise = (async () => {
-      const target = path.join(BIN_DIR, process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
-      const stat = await fsp.stat(target).catch(() => null);
-      if (!stat) await downloadBinary(target);
-      else if (Date.now() - stat.mtimeMs > BINARY_MAX_AGE_MS) {
-        // YouTube sering berubah; perbarui mingguan, tapi tetap pakai versi lama bila gagal.
-        await downloadBinary(target).catch((error) => console.warn(`[yta] Update yt-dlp gagal: ${errorText(error)}`));
-      }
-      return target;
-    })().catch((error) => { binaryPromise = null; throw error; });
+function ytdlpAsset() {
+  if (process.platform === "win32") return process.arch === "ia32" ? "yt-dlp_x86.exe" : "yt-dlp.exe";
+  if (process.platform === "darwin") return "yt-dlp_macos";
+  if (process.platform === "linux") {
+    if (process.arch === "arm64") return "yt-dlp_linux_aarch64";
+    if (process.arch === "x64") return "yt-dlp_linux";
   }
-  return binaryPromise;
+  return null;
+}
+
+/**
+ * Cari yt-dlp yang benar-benar bisa jalan, berurutan:
+ * YTDLP_PATH, binary resmi yang diunduh otomatis (diperbarui mingguan),
+ * yt-dlp di sistem, lalu versi Python (zipapp) bila ada python3.
+ * Mengembalikan { cmd, pre, source, version }.
+ */
+function ytdlpBinary() {
+  if (!ytdlpPromise) {
+    ytdlpPromise = (async () => {
+      const tried = [];
+      const check = async (cmd, pre, source) => {
+        const version = await works(cmd, [...pre, "--version"]);
+        if (version) return { cmd, pre, source, version };
+        tried.push(source);
+        return null;
+      };
+      if (process.env.YTDLP_PATH) {
+        const found = await check(process.env.YTDLP_PATH, [], "YTDLP_PATH");
+        if (found) return found;
+      }
+      const dir = await binDir().catch(() => null);
+      const asset = ytdlpAsset();
+      if (dir && asset) {
+        const target = path.join(dir, `yt-dlp${EXE}`);
+        const stat = await fsp.stat(target).catch(() => null);
+        try {
+          if (!stat) await download(RELEASE + asset, target, 1024 * 1024);
+          else if (Date.now() - stat.mtimeMs > BINARY_MAX_AGE_MS) {
+            // YouTube sering berubah; perbarui mingguan, tapi tetap pakai versi lama bila gagal.
+            await download(RELEASE + asset, target, 1024 * 1024).catch((error) => console.warn(`[yta] Update yt-dlp gagal: ${errorText(error)}`));
+          }
+          ensureExecutable(target);
+          let found = await check(target, [], "unduhan otomatis");
+          if (!found && stat) {
+            // File lama rusak/terpotong: unduh ulang sekali.
+            await download(RELEASE + asset, target, 1024 * 1024);
+            found = await check(target, [], "unduhan otomatis");
+          }
+          if (found) return found;
+        } catch (error) {
+          tried.push(`unduhan otomatis (${errorText(error)})`);
+        }
+      }
+      const system = await check(`yt-dlp${EXE}`, [], "yt-dlp sistem");
+      if (system) return system;
+      if (dir) {
+        for (const python of process.platform === "win32" ? ["py", "python"] : ["python3", "python"]) {
+          if (!(await works(python, ["--version"]))) continue;
+          const zipapp = path.join(dir, "yt-dlp.pyz");
+          try {
+            if (!fs.existsSync(zipapp)) await download(RELEASE + "yt-dlp", zipapp, 1024 * 1024);
+            const found = await check(python, [zipapp], `yt-dlp Python (${python})`);
+            if (found) return found;
+          } catch (error) {
+            tried.push(`yt-dlp Python (${errorText(error)})`);
+          }
+          break;
+        }
+      }
+      throw new Error(`yt-dlp tidak bisa dijalankan di hosting ini (dicoba: ${tried.join(", ") || "-"}). Isi YTDLP_PATH dengan yt-dlp yang bisa jalan.`);
+    })().catch((error) => { ytdlpPromise = null; throw error; });
+  }
+  return ytdlpPromise;
 }
 
 function run(file, args, timeout) {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(file, args, { timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true, env: procEnv() }, (error, stdout, stderr) => {
       if (error) {
         const lines = String(stderr || "").split("\n").map((line) => line.trim()).filter(Boolean);
         const reason = lines.reverse().find((line) => line.startsWith("ERROR")) || lines[0] || error.message;
         if (/confirm you.re not a bot/i.test(reason)) {
-          return reject(new Error("YouTube memblokir IP server bot (minta verifikasi bukan bot). Isi YTDLP_COOKIES dengan file cookies.txt YouTube, atau jalankan bot di jaringan lain."));
+          return reject(Object.assign(new Error("YouTube memblokir IP server bot (minta verifikasi bukan bot). Isi YTDLP_COOKIES dengan file cookies.txt YouTube, atau jalankan bot di jaringan lain."), { retryable: true }));
         }
-        return reject(new Error(error.killed ? "Unduhan melewati batas waktu." : reason.replace(/^ERROR:\s*/, "")));
+        const failure = new Error(error.killed ? "Unduhan melewati batas waktu." : reason.replace(/^ERROR:\s*/, ""));
+        failure.retryable = /requested format is not available|page needs to be reloaded|po token|http error 403/i.test(reason);
+        return reject(failure);
       }
       resolve(String(stdout));
     });
   });
 }
 
-const FFMPEG_RELEASE = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/";
-let ffmpegPromise = null;
-
-/** true bila file ffmpeg benar-benar bisa dijalankan. */
-function ffmpegWorks(file) {
-  return new Promise((resolve) => {
-    execFile(file, ["-hide_banner", "-version"], { timeout: 15000, windowsHide: true }, (error) => resolve(!error));
-  });
+/** Path lengkap program di PATH (yt-dlp butuh path asli untuk --ffmpeg-location, bukan nama saja). */
+function whichSync(name) {
+  const exts = process.platform === "win32" ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""];
+  for (const dir of String(process.env.PATH || "").split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const file = path.join(dir.replace(/^"|"$/g, ""), name + ext);
+      try { if (fs.statSync(file).isFile()) return file; } catch {}
+    }
+  }
+  return null;
 }
 
 /** Binary siap pakai dari npm (@ffmpeg-installer), tanpa skrip install tambahan. */
 function installerPath() {
   try {
     const file = require("@ffmpeg-installer/ffmpeg").path;
-    return file && fs.existsSync(file) ? file : null;
+    if (!file || !fs.existsSync(file)) return null;
+    ensureExecutable(file);
+    return file;
   } catch { return null; }
 }
 
 async function downloadFfmpeg(target) {
   const arch = { x64: "x64", arm64: "arm64", ia32: "ia32", arm: "arm" }[process.arch];
   if (!arch || !["win32", "linux", "darwin"].includes(process.platform)) throw new Error(`Platform ${process.platform}/${process.arch} tidak didukung`);
-  const response = await fetch(`${FFMPEG_RELEASE}ffmpeg-${process.platform}-${arch}.gz`, { redirect: "follow", signal: AbortSignal.timeout(180000) });
-  if (!response.ok) throw new Error(`Gagal mengunduh ffmpeg (HTTP ${response.status})`);
-  const binary = zlib.gunzipSync(Buffer.from(await response.arrayBuffer()));
-  if (binary.length < 5 * 1024 * 1024) throw new Error("File ffmpeg yang diunduh tidak valid.");
-  await fsp.mkdir(BIN_DIR, { recursive: true });
-  const temp = `${target}.${process.pid}.tmp`;
-  await fsp.writeFile(temp, binary, { mode: 0o755 });
-  await fsp.rename(temp, target);
+  await download(`${FFMPEG_RELEASE}ffmpeg-${process.platform}-${arch}.gz`, target, 5 * 1024 * 1024, true);
 }
 
-/** Cari ffmpeg yang bisa jalan. Mengembalikan null bila tidak ada (audio dikirim tanpa konversi). */
-async function ffmpegBinary() {
+/**
+ * Cari ffmpeg yang bisa jalan: FFMPEG_PATH, @ffmpeg-installer/ffmpeg, ffmpeg sistem, lalu unduh otomatis.
+ * Mengembalikan { file, source } atau null (audio dikirim sebagai M4A tanpa konversi).
+ */
+function ffmpegBinary() {
   if (!ffmpegPromise) {
     ffmpegPromise = (async () => {
-      const cached = path.join(BIN_DIR, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
-      const candidates = [process.env.FFMPEG_PATH, installerPath(), "ffmpeg", fs.existsSync(cached) ? cached : null].filter(Boolean);
-      for (const file of candidates) if (await ffmpegWorks(file)) return file;
-      try {
-        await downloadFfmpeg(cached);
-        if (await ffmpegWorks(cached)) return cached;
-      } catch (error) {
-        console.warn(`[yta] ffmpeg otomatis gagal: ${errorText(error)}`);
+      const dir = await binDir().catch(() => null);
+      const cached = dir ? path.join(dir, `ffmpeg${EXE}`) : null;
+      const candidates = [
+        [process.env.FFMPEG_PATH, "FFMPEG_PATH"],
+        [installerPath(), "npm @ffmpeg-installer"],
+        [whichSync("ffmpeg"), "ffmpeg sistem"],
+        [cached && fs.existsSync(cached) ? cached : null, "unduhan otomatis"],
+      ];
+      for (const [file, source] of candidates) if (file && (await works(file, ["-hide_banner", "-version"]))) return { file, source };
+      if (cached) {
+        try {
+          await downloadFfmpeg(cached);
+          if (await works(cached, ["-hide_banner", "-version"])) return { file: cached, source: "unduhan otomatis" };
+        } catch (error) {
+          console.warn(`[yta] ffmpeg otomatis gagal: ${errorText(error)}`);
+        }
       }
       console.warn("[yta] ffmpeg tidak tersedia, audio dikirim sebagai M4A tanpa konversi.");
       return null;
     })();
     // Hasil null tidak disimpan permanen, supaya dicoba lagi di permintaan berikutnya.
-    ffmpegPromise.then((file) => { if (!file) ffmpegPromise = null; });
+    ffmpegPromise.then((found) => { if (!found) ffmpegPromise = null; });
   }
   return ffmpegPromise;
 }
@@ -173,8 +283,8 @@ async function ffmpegBinary() {
  * Mengembalikan path file; pemanggil WAJIB memanggil cleanup() setelah selesai.
  */
 async function downloadAudio(videoId) {
-  const binary = await ytdlpBinary();
-  const ffmpeg = await ffmpegBinary();
+  const ytdlp = await ytdlpBinary();
+  const ffmpeg = (await ffmpegBinary())?.file;
   await fsp.mkdir(WORK_DIR, { recursive: true });
   const dir = await fsp.mkdtemp(path.join(WORK_DIR, `${videoId}-`));
   const cleanup = () => fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -197,7 +307,19 @@ async function downloadAudio(videoId) {
       args.push("--cookies", cookies);
     }
     args.push(`https://www.youtube.com/watch?v=${videoId}`);
-    const stdout = await run(binary, args, 5 * 60 * 1000);
+    // YouTube kadang menolak client bawaan dari IP hosting; coba client lain sebelum menyerah.
+    let stdout;
+    for (const [index, client] of PLAYER_CLIENTS.entries()) {
+      try {
+        const extra = client ? ["--extractor-args", `youtube:player_client=${client}`] : [];
+        stdout = await run(ytdlp.cmd, [...ytdlp.pre, ...extra, ...args], 8 * 60 * 1000);
+        break;
+      } catch (error) {
+        if (!error.retryable || index === PLAYER_CLIENTS.length - 1) throw error;
+        console.warn(`[yta] ${videoId}: ${errorText(error)} -> coba client ${PLAYER_CLIENTS[index + 1]}`);
+        for (const name of await fsp.readdir(dir).catch(() => [])) await fsp.rm(path.join(dir, name), { force: true, recursive: true }).catch(() => {});
+      }
+    }
     const line = stdout.trim().split("\n").filter(Boolean).pop();
     if (!line) throw new Error(`Video tidak diunduh. Mungkin lebih dari ${MAX_DURATION_SEC / 60} menit, live, atau lebih dari ${MAX_AUDIO_MB} MB.`);
     const [title, duration, filepath] = line.split("\t");
@@ -236,13 +358,29 @@ async function sendAudio(api, videoId) {
   }
 }
 
+async function statusText() {
+  const [ytdlp, ffmpeg] = await Promise.all([
+    ytdlpBinary().then((found) => `${found.source}, versi ${found.version}`).catch((error) => `GAGAL - ${errorText(error)}`),
+    ffmpegBinary().then((found) => (found ? `${found.source} (audio MP3)` : "tidak ada (audio dikirim M4A)")).catch(() => "tidak ada (audio dikirim M4A)"),
+  ]);
+  return `*Status YTA*\nVersi: ${YTA_VERSION}\nSistem: ${process.platform}/${process.arch}, Node ${process.version}\nyt-dlp: ${ytdlp}\nffmpeg: ${ffmpeg}`;
+}
+
+// Siapkan yt-dlp dan ffmpeg sejak bot menyala, supaya permintaan pertama cepat
+// dan masalah di hosting langsung terlihat di console.
+setTimeout(() => {
+  Promise.all([ytdlpBinary(), ffmpegBinary()])
+    .then(([ytdlp, ffmpeg]) => console.log(`[yta] Siap v${YTA_VERSION}: yt-dlp ${ytdlp.version} (${ytdlp.source}), ffmpeg ${ffmpeg ? ffmpeg.source : "tidak ada, kirim M4A"}`))
+    .catch((error) => console.warn(`[yta] Belum siap: ${errorText(error)}`));
+}, 2000).unref?.();
+
 module.exports = {
   config: {
     name: "yta",
     aliases: [],
     cooldown: 5,
     description: "Cari lagu YouTube atau kirim link, lalu bot mengirim audionya",
-    usage: "yta <judul | link YouTube>, lalu ketik nomor 1-10",
+    usage: "yta <judul | link YouTube>, lalu ketik nomor 1-10. yta cek untuk status",
     category: "Media",
     price: 0,
     role: 0,
@@ -251,6 +389,8 @@ module.exports = {
   _sendAudio: sendAudio,
   _workDir: WORK_DIR,
   _ffmpegBinary: ffmpegBinary,
+  _ytdlpBinary: ytdlpBinary,
+  _statusText: statusText,
   hasPendingSelection(chatJid, senderNumber, _quotedMessageId, text = "") {
     prune();
     return /^\d{1,2}$/.test(String(text).trim()) && pendingSelections.has(selectionKey(chatJid, senderNumber));
@@ -279,6 +419,7 @@ module.exports = {
   onStart: async function ({ api, args, event, prefix }) {
     prune();
     const query = args.join(" ").trim();
+    if (query.toLowerCase() === "cek") return api.reply(await statusText());
     if (!query) return api.reply(`Gunakan: ${prefix}yta <judul lagu | link YouTube>\nContoh: ${prefix}yta cruel angel thesis`);
     if (query.length > 200) return api.reply("Teks terlalu panjang (maksimal 200 karakter).");
 
