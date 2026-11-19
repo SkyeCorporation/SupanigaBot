@@ -17,7 +17,7 @@ const RESULT_TTL = 15 * 60 * 1000;
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const SELECTION_RE = /^\d{1,2}(\s*,\s*\d{1,2})*$/;
 // Karya R-18 dengan tag yang mengarah ke anak di bawah umur selalu dibuang.
-const BLOCKED_ADULT_TAGS = /ロリ|ょうじょ|幼女|幼児|児童|ショタ|小学生|中学生|子供|こども|loli|shota|child|kid\b|underage|toddler/i;
+const BLOCKED_ADULT_TAGS = /ロリ|ようじょ|幼女|幼児|児童|ショタ|小学生|中学生|子供|こども|loli|shota|child|kid\b|underage|toddler/i;
 const searches = new Map();
 
 // Chat pribadi bisa datang sebagai @lid atau @s.whatsapp.net; kunci pakai nomor saja.
@@ -112,7 +112,7 @@ async function downloadImage(url, maxBytes = MAX_IMAGE_BYTES) {
       preferredHost = host;
       return image;
     } catch (error) {
-      errors.push(`${host}: ${error?.cause?.code || error?.name === "TimeoutError" && "timeout" || errorText(error)}`);
+      errors.push(`${host}: ${error?.cause?.code || (error?.name === "TimeoutError" && "timeout") || errorText(error)}`);
     }
     if (original.hostname !== "i.pximg.net") break;
   }
@@ -182,15 +182,21 @@ async function sendWork(api, item, number) {
   for (const [index, pageInfo] of list.entries()) {
     let image;
     for (const url of [pageInfo.urls?.original, pageInfo.urls?.regular, pageInfo.urls?.small].filter(Boolean)) {
-      try { image = await downloadImage(url); break; } catch (error) { lastError = error; }
+      try {
+        image = await downloadImage(url);
+        break;
+      } catch (error) {
+        lastError = error;
+      }
     }
     if (!image) continue;
-    const head = index === 0
-      ? `${number ? `${number}. ` : ""}${item.title}\nArtis: ${item.user || "-"}\n` +
-        `${item.pages > 1 ? `Halaman: ${item.pages}${item.pages > MAX_PAGES ? ` (dikirim ${MAX_PAGES} pertama)` : ""}\n` : ""}` +
-        `${item.type === 2 ? "Animasi (ugoira), dikirim frame pertama\n" : ""}${item.ai ? "Karya AI\n" : ""}` +
-        `https://www.pixiv.net/artworks/${item.id}`
-      : `${item.title} - halaman ${index + 1}`;
+    const head =
+      index === 0
+        ? `${number ? `${number}. ` : ""}${item.title}\nArtis: ${item.user || "-"}\n` +
+          `${item.pages > 1 ? `Halaman: ${item.pages}${item.pages > MAX_PAGES ? ` (dikirim ${MAX_PAGES} pertama)` : ""}` : ""}` +
+          `${item.type === 2 ? "Animasi (ugoira), dikirim frame pertama\n" : ""}${item.ai ? "Karya AI\n" : ""}` +
+          `https://www.pixiv.net/artworks/${item.id}`
+        : `${item.title} - halaman ${index + 1}`;
     await api.sendMessage({ image: image.buffer, caption: head });
     sent++;
   }
@@ -235,7 +241,10 @@ module.exports = {
     const words = [];
     for (const arg of args) {
       const flag = arg.toLowerCase().match(/^-(\d{1,2}|populer|popular|r18|noai)$/);
-      if (!flag) { words.push(arg); continue; }
+      if (!flag) {
+        words.push(arg);
+        continue;
+      }
       if (/^\d+$/.test(flag[1])) page = Number(flag[1]);
       else flags.add(flag[1] === "popular" ? "populer" : flag[1]);
     }
@@ -247,7 +256,9 @@ module.exports = {
     if (!keyword || keyword.length > 100 || page < 1 || page > 50) return api.reply(usage);
     if (adult && event.isGroup) return api.reply("Mode -r18 hanya bisa dipakai di chat pribadi dengan bot.");
     if (adult && !pixivCookie()) {
-      return api.reply("Mode -r18 butuh login Pixiv. Admin bot perlu mengisi PIXIV_COOKIE (cookie PHPSESSID akun Pixiv yang sudah mengaktifkan konten R-18) di hosting.");
+      return api.reply(
+        "Mode -r18 butuh login Pixiv. Admin bot perlu mengisi PIXIV_COOKIE (cookie PHPSESSID akun Pixiv yang sudah mengaktifkan konten R-18) di hosting."
+      );
     }
 
     try {
@@ -263,23 +274,44 @@ module.exports = {
       }
 
       await api.reply(`Mencari "${clean(keyword, 60)}" di Pixiv...`);
-      const { items, total } = await searchPixiv(keyword, { page, adult, popular: flags.has("populer"), noAi: flags.has("noai") });
+      const { items, total } = await searchPixiv(keyword, {
+        page,
+        adult,
+        popular: flags.has("populer"),
+        noAi: flags.has("noai"),
+      });
       if (!items.length) {
-        const hint = adult ? " Pastikan akun di PIXIV_COOKIE sudah mengaktifkan konten R-18 di pengaturan Pixiv." : " Coba tag bahasa Jepang, contoh 初音ミク.";
+        const hint = adult
+          ? " Pastikan akun di PIXIV_COOKIE sudah mengaktifkan konten R-18 di pengaturan Pixiv."
+          : " Coba tag bahasa Jepang, contoh 初音ミク.";
         return api.reply(`Tidak ada karya Pixiv untuk "${clean(keyword, 60)}" di halaman ${page}.${hint}`);
       }
-      const downloads = await Promise.allSettled(items.map((item) => downloadImage(item.preview).catch(() => downloadImage(item.thumb))));
+      const downloads = await Promise.allSettled(
+        items.map((item) => downloadImage(item.preview).catch(() => downloadImage(item.thumb)))
+      );
       const shown = [];
       const buffers = [];
       const reasons = [];
       downloads.forEach((result, i) => {
-        if (result.status === "fulfilled") { shown.push(items[i]); buffers.push(result.value.buffer); }
-        else reasons.push(errorText(result.reason));
+        if (result.status === "fulfilled") {
+          shown.push(items[i]);
+          buffers.push(result.value.buffer);
+        } else {
+          reasons.push(errorText(result.reason));
+        }
       });
-      if (!shown.length) throw new Error(`Semua gambar gagal diambil dari Pixiv (${reasons[0] || "tanpa detail"}). Isi PIXIV_IMAGE_PROXY bila jaringan hosting memblokir gambar Pixiv.`);
+      if (!shown.length) {
+        throw new Error(
+          `Semua gambar gagal diambil dari Pixiv (${reasons[0] || "tanpa detail"}). Isi PIXIV_IMAGE_PROXY bila jaringan hosting memblokir gambar Pixiv.`
+        );
+      }
 
       const grid = await pin._renderGrid(buffers);
-      searches.set(keyFor(event.chatJid, event.senderNumber), { items: shown, createdAt: Date.now(), expiresAt: Date.now() + RESULT_TTL });
+      searches.set(keyFor(event.chatJid, event.senderNumber), {
+        items: shown,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + RESULT_TTL,
+      });
       const tags = [flags.has("populer") && "populer", adult && "R-18", flags.has("noai") && "tanpa AI"].filter(Boolean);
       await api.sendMessage({
         image: grid,
