@@ -132,7 +132,12 @@ export async function handleMessage(sock, msg) {
   // Route plain chat to pending PIN/YTA selections (user just types "1" or
   // "1, 2, 3", no reply needed) and replies to the exact Esdeath response.
   if (!isCommand && text) {
-    for (const replyCommand of commandList) {
+    // Bila beberapa command menunggu pilihan (mis. PIN lalu YTA), yang terbaru menang.
+    const since = (cmd) => {
+      try { return Number(cmd.pendingSince?.(chatJid, nomor)) || 0; } catch { return 0; }
+    };
+    const replyOrder = [...commandList].sort((a, b) => since(b) - since(a));
+    for (const replyCommand of replyOrder) {
       const hasPending = replyCommand.hasPendingSelection || replyCommand.hasPendingReply;
       if (typeof hasPending !== "function") continue;
       if (!replyCommand.hasPendingSelection && !quotedMessageId) continue;

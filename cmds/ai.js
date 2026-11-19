@@ -18,6 +18,10 @@ function saveHistory(history) {
   fs.writeFileSync(tempPath, JSON.stringify(history, null, 2), "utf8");
   fs.renameSync(tempPath, HISTORY_PATH);
 }
+// Chat pribadi bisa datang sebagai @lid atau @s.whatsapp.net; balasan dikunci pakai nomor saja.
+function replyChat(chatJid) {
+  return String(chatJid).endsWith("@g.us") ? chatJid : "dm";
+}
 function conversationKey(event) {
   return `${event.chatJid}:${event.senderNumber}`;
 }
@@ -96,7 +100,7 @@ async function respond({ api, event, args = [] }) {
   if (messageId) {
     pruneReplies();
     if (pendingReplies.size >= 300) pendingReplies.delete(pendingReplies.keys().next().value);
-    pendingReplies.set(`${event.chatJid}:${event.senderNumber}:${messageId}`, { expiresAt: Date.now() + REPLY_TTL_MS });
+    pendingReplies.set(`${replyChat(event.chatJid)}:${event.senderNumber}:${messageId}`, { expiresAt: Date.now() + REPLY_TTL_MS });
   }
   return sent;
 }
@@ -114,7 +118,7 @@ module.exports = {
   },
   hasPendingReply(chatJid, senderNumber, quotedMessageId) {
     pruneReplies();
-    return pendingReplies.has(`${chatJid}:${senderNumber}:${quotedMessageId}`);
+    return pendingReplies.has(`${replyChat(chatJid)}:${senderNumber}:${quotedMessageId}`);
   },
   async onReply({ api, event, text }) {
     event.body = String(text || "");

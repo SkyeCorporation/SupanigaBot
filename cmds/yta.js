@@ -49,9 +49,11 @@ let binDirPromise = null;
 let ytdlpPromise = null;
 let ffmpegPromise = null;
 
+// Chat pribadi bisa datang sebagai @lid atau @s.whatsapp.net; kunci pakai nomor saja.
 function selectionKey(chatJid, senderNumber) {
-  return `${chatJid}:${senderNumber}`;
+  return `${String(chatJid).endsWith("@g.us") ? chatJid : "dm"}:${senderNumber}`;
 }
+const PICK_RE = /^\s*(\d{1,2})\s*[.)]?\s*$/;
 function clean(value, maxLength = 140) {
   return String(value || "Unknown").replace(/[\r\n\t]+/g, " ").trim().slice(0, maxLength);
 }
@@ -393,14 +395,17 @@ module.exports = {
   _statusText: statusText,
   hasPendingSelection(chatJid, senderNumber, _quotedMessageId, text = "") {
     prune();
-    return /^\d{1,2}$/.test(String(text).trim()) && pendingSelections.has(selectionKey(chatJid, senderNumber));
+    return PICK_RE.test(String(text)) && pendingSelections.has(selectionKey(chatJid, senderNumber));
+  },
+  pendingSince(chatJid, senderNumber) {
+    return pendingSelections.get(selectionKey(chatJid, senderNumber))?.createdAt || 0;
   },
   onReply: async function ({ api, event, text }) {
     prune();
     const key = selectionKey(event.chatJid, event.senderNumber);
     const pending = pendingSelections.get(key);
     if (!pending) return false;
-    const index = Number(String(text).trim()) - 1;
+    const index = Number(String(text).match(PICK_RE)?.[1]) - 1;
     const video = pending.results[index];
     if (!video) {
       await api.reply(`Nomor tidak tersedia. Pilih 1-${pending.results.length}.`);
@@ -437,6 +442,7 @@ module.exports = {
       await api.reply(`*Hasil YouTube: ${clean(query, 60)}*\n\n${lines.join("\n\n")}\n\nKetik nomor 1-${results.length} untuk mengunduh audio.\nBerlaku 10 menit.`);
       pendingSelections.set(selectionKey(event.chatJid, event.senderNumber), {
         results: results.map((v) => ({ videoId: v.videoId, title: v.title })),
+        createdAt: Date.now(),
         expiresAt: Date.now() + SELECTION_TTL_MS,
       });
     } catch (error) {

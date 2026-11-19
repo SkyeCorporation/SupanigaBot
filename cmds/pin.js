@@ -3,6 +3,8 @@
  * Bot mengirim SATU gambar kolase berisi 8 foto bernomor (anti spam), lalu user
  * cukup ketik angka di chat (tanpa reply). Bisa pilih beberapa dengan koma: 1, 2, 3
  */
+const fs = require("node:fs");
+const path = require("node:path");
 const sharp = require("sharp");
 const MAX_RESULTS = 8;
 const PAGE_SIZE = 25;
@@ -12,8 +14,9 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const SELECTION_RE = /^\d{1,2}(\s*,\s*\d{1,2})*$/;
 const searches = new Map();
 
+// Chat pribadi bisa datang sebagai @lid atau @s.whatsapp.net; kunci pakai nomor saja.
 function keyFor(chatJid, senderNumber) {
-  return `${chatJid}:${senderNumber}`;
+  return `${String(chatJid).endsWith("@g.us") ? chatJid : "dm"}:${senderNumber}`;
 }
 function prune() {
   const now = Date.now();
@@ -110,20 +113,10 @@ const DIGITS = {
   8: "M20 29 C12 29 11 23 11 19 C11 12 15 8 20 8 C25 8 29 12 29 19 C29 23 28 29 20 29 C11 29 9 36 9 41 C9 48 14 53 20 53 C26 53 31 48 31 41 C31 36 29 29 20 29 Z",
   9: "M31 22 C31 27 26 32 20 32 C13 32 9 27 9 20 C9 13 14 8 20 8 C27 8 31 13 31 22 C31 38 27 52 12 51",
 };
-// Huruf watermark "SupanigaMX": monoline geometris dengan sudut terpancung,
-// digambar sebagai vektor agar bentuknya sama di semua server tanpa font eksternal.
-const LETTERS = {
-  S: { w: 31, d: "M28 4 H11 L4 11 V18 L11 23 H21 L27 28 V34 L21 40 H4 M28 4 V10 M4 34 V40" },
-  u: { w: 29, d: "M4 13 V32 L11 39 H19 L25 33 V13 M25 13 V39" },
-  p: { w: 30, d: "M4 52 V13 H20 L26 19 V31 L20 37 H4" },
-  a: { w: 29, d: "M25 39 V13 H11 L4 20 V32 L11 39 H18 L25 33" },
-  n: { w: 29, d: "M4 39 V13 M4 22 L11 13 H19 L25 19 V39" },
-  i: { w: 10, d: "M5 17 V39 M5 5 V10" },
-  g: { w: 29, d: "M25 44 V13 H11 L4 20 V32 L11 39 H18 L25 33 M25 44 L19 52 H5" },
-  M: { w: 39, d: "M3 40 V3 L19 25 L35 3 V40 M3 3 H9 M29 3 H35" },
-  X: { w: 34, d: "M3 3 L30 40 M30 3 L3 40 M3 3 H10 M24 40 H30" },
-};
-const WATERMARK = "SupanigaMX";
+// Watermark memakai font asli (Audiowide, lisensi OFL) yang ikut di folder assets/fonts,
+// jadi tampil sama di semua hosting tanpa perlu font terpasang di sistem.
+const FONT_FILE = path.join(__dirname, "..", "assets", "fonts", "Audiowide-Regular.ttf");
+const FONT_NAME = "Audiowide";
 
 const TILE_W = 280;
 const TILE_H = 372; // potret 3:4 seperti pin Pinterest
@@ -165,42 +158,36 @@ function badgeSvg(number, theme) {
   );
 }
 
-/** Watermark kecil "SupanigaMX" bergaya logo HUD, tanpa ketergantungan font sistem. */
-function watermarkSvg(theme, capHeight = 18) {
-  const k = capHeight / 40;
-  const spacing = 4;
-  const padX = 13;
-  const padY = 8;
-  let x = 0;
-  let paths = "";
-  let accentPaths = "";
-  WATERMARK.split("").forEach((ch, index) => {
-    const glyph = LETTERS[ch];
-    const path = `<path d="${glyph.d}" transform="translate(${x} 0)"/>`;
-    if (index >= WATERMARK.length - 2) accentPaths += path;
-    else paths += path;
-    x += glyph.w + spacing;
-  });
-  const textWidth = (x - spacing) * k;
-  const width = Math.ceil(textWidth) + padX * 2 + 14;
-  const height = Math.ceil(54 * k) + padY * 2;
-  const textX = padX + 7;
-  return {
-    width,
-    height,
-    input: Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><defs>` +
-      `<linearGradient id="wm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="0.55" stop-color="${theme.a}"/><stop offset="1" stop-color="${theme.b}"/></linearGradient>` +
-      `<filter id="wg" x="-30%" y="-40%" width="160%" height="180%"><feGaussianBlur stdDeviation="2.2"/></filter></defs>` +
-      `<path d="M9 1 H${width - 9} L${width - 1} 9 V${height - 9} L${width - 9} ${height - 1} H9 L1 ${height - 9} V9 Z" fill="#03040c" fill-opacity="0.82" stroke="${theme.a}" stroke-opacity="0.48" stroke-width="1"/>` +
-      `<path d="M7 7 H27 M${width - 27} ${height - 7} H${width - 7}" stroke="url(#wm)" stroke-width="2"/>` +
-      `<g transform="translate(${textX} ${padY}) scale(${k})" fill="none" stroke-width="5.2" stroke-linecap="square" stroke-linejoin="bevel">` +
-      `<g stroke="#000000" stroke-opacity="0.9" stroke-width="9">${paths}${accentPaths}</g>` +
-      `<g stroke="url(#wm)" stroke-opacity="0.7" filter="url(#wg)">${paths}${accentPaths}</g>` +
-      `<g stroke="url(#wm)">${paths}</g><g stroke="${theme.b}">${accentPaths}</g></g>` +
-      `<circle cx="7" cy="${height / 2}" r="2" fill="${theme.a}"/></svg>`,
-    ),
-  };
+/** Tulisan "SupanigaMX" berfont dengan bayangan tipis dan cahaya neon lembut. */
+async function watermarkImage(theme, size = 25) {
+  const hasFont = fs.existsSync(FONT_FILE);
+  const render = (first, second) => sharp({
+    text: {
+      text: `<span foreground="${first}">Supaniga</span><span foreground="${second}">MX</span>`,
+      font: `${hasFont ? FONT_NAME : "sans bold"} ${size}`,
+      ...(hasFont ? { fontfile: FONT_FILE } : {}),
+      rgba: true,
+      dpi: 72,
+    },
+  }).png().toBuffer();
+  const [main, glowText, shadowText] = await Promise.all([
+    render("#ffffff", theme.b),
+    render(theme.a, theme.b),
+    render("#000000", "#000000"),
+  ]);
+  const { width: textW, height: textH } = await sharp(main).metadata();
+  const pad = 14;
+  const width = textW + pad * 2;
+  const height = textH + pad * 2;
+  const canvas = () => sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
+  const spread = async (input, left, top, sigma) =>
+    sharp(await canvas().composite([{ input, left, top }]).png().toBuffer()).blur(sigma).png().toBuffer();
+  const [glow, shadow] = await Promise.all([spread(glowText, pad, pad, 6), spread(shadowText, pad + 1, pad + 2, 2)]);
+  const input = await canvas()
+    .composite([{ input: shadow, left: 0, top: 0 }, { input: glow, left: 0, top: 0 }, { input: main, left: pad, top: pad }])
+    .png()
+    .toBuffer();
+  return { input, width, height };
 }
 
 async function tileImage(buffer, theme) {
@@ -324,9 +311,10 @@ async function renderGrid(buffers) {
   const rows = Math.ceil(count / cols);
   const width = PAD_X * 2 + cols * TILE_W + (cols - 1) * GAP;
   const height = PAD_TOP + PAD_BOTTOM + rows * TILE_H + (rows - 1) * GAP;
-  const [nebula, tiles] = await Promise.all([
+  const [nebula, tiles, mark] = await Promise.all([
     photoColor(buffers[0]).then((color) => nebulaLayer(width, height, theme, color)),
     Promise.all(buffers.map((b) => tileImage(b, theme))),
+    watermarkImage(theme),
   ]);
   const positions = tiles.map((_, i) => {
     const row = Math.floor(i / cols);
@@ -344,14 +332,13 @@ async function renderGrid(buffers) {
       `<rect x="${p.left - 4}" y="${p.top - 4}" width="${TILE_W + 8}" height="${TILE_H + 8}" rx="${RADIUS + 4}" fill="none" stroke="url(#n)" stroke-width="10" stroke-opacity="0.75"/>`).join("") +
     `</g></svg>`,
   );
-  const mark = watermarkSvg(theme);
   const layers = [{ input: techLayer(width, height, theme), left: 0, top: 0 }, { input: glow, left: 0, top: 0 }];
   tiles.forEach((tile, i) => {
     const { left, top } = positions[i];
     layers.push({ input: tile, left, top });
     layers.push({ input: badgeSvg(i + 1, theme), left: left + 12, top: top + 12 });
   });
-  layers.push({ input: mark.input, left: width - PAD_X - mark.width + 4, top: height - Math.round(PAD_BOTTOM / 2) - Math.round(mark.height / 2) + 4 });
+  layers.push({ input: mark.input, left: width - PAD_X - mark.width - 6, top: height - Math.round(PAD_BOTTOM / 2) - Math.round(mark.height / 2) + 4 });
   return sharp(nebula)
     .composite(layers)
     .jpeg({ quality: 88, mozjpeg: true })
@@ -375,6 +362,9 @@ module.exports = {
   hasPendingSelection(chatJid, senderNumber, _quotedMessageId, text = "") {
     prune();
     return !!parseSelection(text) && searches.has(keyFor(chatJid, senderNumber));
+  },
+  pendingSince(chatJid, senderNumber) {
+    return searches.get(keyFor(chatJid, senderNumber))?.createdAt || 0;
   },
   onStart: async function ({ api, event, args, prefix }) {
     prune();
@@ -402,7 +392,7 @@ module.exports = {
       if (!sent.length) throw new Error(`Semua foto gagal diambil. ${errors[0] || ""}`.trim());
 
       const grid = await renderGrid(buffers);
-      searches.set(keyFor(event.chatJid, event.senderNumber), { keyword, images: sent, expiresAt: Date.now() + RESULT_TTL });
+      searches.set(keyFor(event.chatJid, event.senderNumber), { keyword, images: sent, createdAt: Date.now(), expiresAt: Date.now() + RESULT_TTL });
       await api.sendMessage({
         image: grid,
         caption:
