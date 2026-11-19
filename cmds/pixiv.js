@@ -70,17 +70,53 @@ async function pixivApi(pathAndQuery) {
   return json.body;
 }
 
-/** Gambar i.pximg.net hanya bisa diunduh dengan referer pixiv.net. */
-async function downloadImage(url, maxBytes = MAX_IMAGE_BYTES) {
-  const response = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(30000) });
-  if (!response.ok) throw new Error(`Unduh gambar HTTP ${response.status}`);
+// Server gambar Pixiv (i.pximg.net) sering diblokir provider internet (mis. di Indonesia)
+// atau menolak tanpa referer. Bila gagal, bot otomatis memakai mirror gambar publik.
+// PIXIV_IMAGE_PROXY (opsional) = host mirror sendiri, dicoba paling awal.
+const IMAGE_HOSTS = ["i.pximg.net", "i.pixiv.re", "i.pixiv.nl"];
+let preferredHost = null;
+
+function imageHosts() {
+  const custom = String(process.env.PIXIV_IMAGE_PROXY || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+  const hosts = [custom, preferredHost, ...IMAGE_HOSTS].filter(Boolean);
+  return [...new Set(hosts)];
+}
+
+async function fetchImage(url, maxBytes) {
+  const direct = new URL(url).hostname === "i.pximg.net";
+  const response = await fetch(url, {
+    headers: direct ? headers({ accept: "image/*" }) : { "user-agent": UA, accept: "image/*" },
+    ...(direct ? { referrer: "https://www.pixiv.net/" } : {}),
+    redirect: "follow",
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const mime = response.headers.get("content-type") || "";
-  if (!mime.startsWith("image/")) throw new Error(`URL bukan gambar (${mime || "content-type kosong"})`);
+  if (!mime.startsWith("image/")) throw new Error(`bukan gambar (${mime || "content-type kosong"})`);
   const declared = Number(response.headers.get("content-length") || 0);
-  if (declared > maxBytes) throw new Error("Gambar terlalu besar");
+  if (declared > maxBytes) throw new Error("gambar terlalu besar");
   const buffer = Buffer.from(await response.arrayBuffer());
-  if (!buffer.length || buffer.length > maxBytes) throw new Error("Gambar kosong atau terlalu besar");
+  if (!buffer.length || buffer.length > maxBytes) throw new Error("gambar kosong atau terlalu besar");
   return { buffer, mime };
+}
+
+/** Unduh gambar Pixiv: langsung dulu, lalu lewat mirror. Host yang berhasil diingat. */
+async function downloadImage(url, maxBytes = MAX_IMAGE_BYTES) {
+  const original = new URL(url);
+  const errors = [];
+  for (const host of imageHosts()) {
+    const target = new URL(original);
+    if (original.hostname === "i.pximg.net") target.hostname = host;
+    try {
+      const image = await fetchImage(target.toString(), maxBytes);
+      preferredHost = host;
+      return image;
+    } catch (error) {
+      errors.push(`${host}: ${error?.cause?.code || error?.name === "TimeoutError" && "timeout" || errorText(error)}`);
+    }
+    if (original.hostname !== "i.pximg.net") break;
+  }
+  throw new Error(errors.join("; "));
 }
 
 /** Thumbnail kotak 250px -> versi 540px yang tidak dipotong, untuk kolase. */
@@ -142,10 +178,11 @@ async function sendWork(api, item, number) {
   const list = (Array.isArray(pages) ? pages : []).slice(0, MAX_PAGES);
   if (!list.length) throw new Error("Halaman karya tidak ditemukan.");
   let sent = 0;
+  let lastError = null;
   for (const [index, pageInfo] of list.entries()) {
     let image;
     for (const url of [pageInfo.urls?.original, pageInfo.urls?.regular, pageInfo.urls?.small].filter(Boolean)) {
-      try { image = await downloadImage(url); break; } catch {}
+      try { image = await downloadImage(url); break; } catch (error) { lastError = error; }
     }
     if (!image) continue;
     const head = index === 0
@@ -157,7 +194,7 @@ async function sendWork(api, item, number) {
     await api.sendMessage({ image: image.buffer, caption: head });
     sent++;
   }
-  if (!sent) throw new Error("Semua gambar gagal diambil.");
+  if (!sent) throw new Error(`Semua gambar gagal diambil${lastError ? ` (${errorText(lastError)})` : ""}.`);
 }
 
 function workId(text) {
@@ -183,6 +220,7 @@ module.exports = {
   _isAllowed: isAllowed,
   _workId: workId,
   _sendWork: sendWork,
+  _downloadImage: downloadImage,
   hasPendingSelection(chatJid, senderNumber, _quotedMessageId, text = "") {
     prune();
     return !!parseSelection(text) && searches.has(keyFor(chatJid, senderNumber));
@@ -233,10 +271,12 @@ module.exports = {
       const downloads = await Promise.allSettled(items.map((item) => downloadImage(item.preview).catch(() => downloadImage(item.thumb))));
       const shown = [];
       const buffers = [];
+      const reasons = [];
       downloads.forEach((result, i) => {
         if (result.status === "fulfilled") { shown.push(items[i]); buffers.push(result.value.buffer); }
+        else reasons.push(errorText(result.reason));
       });
-      if (!shown.length) throw new Error("Semua gambar gagal diambil dari Pixiv.");
+      if (!shown.length) throw new Error(`Semua gambar gagal diambil dari Pixiv (${reasons[0] || "tanpa detail"}). Isi PIXIV_IMAGE_PROXY bila jaringan hosting memblokir gambar Pixiv.`);
 
       const grid = await pin._renderGrid(buffers);
       searches.set(keyFor(event.chatJid, event.senderNumber), { items: shown, createdAt: Date.now(), expiresAt: Date.now() + RESULT_TTL });
