@@ -9,7 +9,7 @@ module.exports = {
     name: "info",
     aliases: ["about"],
     cooldown: 10,
-    description: "Informasi bot & pembuat",
+    description: "Menampilkan informasi bot dan pengembang",
     category: "Umum",
     price: 0,
     role: 0,

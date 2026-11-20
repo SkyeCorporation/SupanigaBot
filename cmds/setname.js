@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "setname",
     cooldown: 30,
-    description: "Ganti nama kamu di database bot",
+    description: "Mengubah nama Anda di database bot",
     usage: "setname <nama>",
     category: "User",
     price: 0,

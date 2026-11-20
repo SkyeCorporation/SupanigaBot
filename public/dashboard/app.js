@@ -234,7 +234,7 @@
   setInterval(async () => { if (!state.online || $("#app").hidden) return; try { const r = await api("/api/overview"); if (r.ok && r.data) { state.overview = r.data; renderDatabase(r.data.database); } } catch (error) { showDashboardError(`Gagal memperbarui dashboard: ${error.message}`); } }, 15000);
 
   function showLogin() { state.es?.close(); $("#app").hidden = true; $("#login").hidden = false; setTimeout(() => $("#password")?.focus(), 50); }
-  function showApp() { $("#login").hidden = true; $("#app").hidden = false; const notice = ensureDashboardNotice(); notice.hidden = true; notice.textContent = "Memuat dashboard…"; loadOverview().then((loaded) => { if (loaded) connectStream(); }).catch((error) => showDashboardError(`${error.message}. Dashboard tetap terbuka; periksa log server dan endpoint /api/overview.`)); }
+  function showApp() { $("#login").hidden = true; $("#app").hidden = false; const notice = ensureDashboardNotice(); notice.hidden = true; notice.textContent = "Memuat dashboard…"; loadOverview().then((loaded) => { if (loaded) { connectStream(); loadShellInfo(); } }).catch((error) => showDashboardError(`${error.message}. Dashboard tetap terbuka; periksa log server dan endpoint /api/overview.`)); }
 
   $("#loginForm")?.addEventListener("submit", async (e) => {
     e.preventDefault(); const btn = $("#loginBtn"), err = $("#loginError"); err.textContent = ""; btn.disabled = true;
@@ -250,6 +250,35 @@
   $("#logoutBtn")?.addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); showLogin(); });
   $("#waLogoutBtn")?.addEventListener("click", async () => { if (!confirm("Logout sesi WhatsApp? Bot akan membuat QR Code baru.")) return; const r = await api("/api/wa/logout", { method: "POST" }); toast(r.ok ? "Sesi dihapus, menunggu QR baru…" : "Gagal logout sesi"); });
   $("#reloadBtn")?.addEventListener("click", async () => { const r = await api("/api/cmds/reload", { method: "POST" }); if (r.ok) { renderCommands(r.data.commands, state.overview?.prefix || "."); toast(`${r.data.total} command dimuat ulang`); } else toast("Gagal reload command"); });
+
+  // ---------- Shell ----------
+  const shellState = { history: [], index: -1, busy: false };
+  function shellLine(html, cls = "") { const box = $("#shellOutput"); if (!box) return; box.insertAdjacentHTML("beforeend", `<div class="line ${cls}">${html}</div>`); while (box.children.length > 400) box.firstElementChild.remove(); box.scrollTop = box.scrollHeight; }
+  async function loadShellInfo() { try { const r = await api("/api/shell"); if (r.ok && r.data) { $("#shellCwd").textContent = r.data.enabled ? r.data.cwd : "nonaktif"; $("#shellInput").disabled = !r.data.enabled; $("#shellRun").disabled = !r.data.enabled; } } catch { /* opsional */ } }
+  $("#shellForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault(); if (shellState.busy) return;
+    const input = $("#shellInput"), command = input.value.trim(); if (!command) return;
+    shellState.history.push(command); if (shellState.history.length > 50) shellState.history.shift(); shellState.index = shellState.history.length; input.value = "";
+    shellLine(`<span class="lv lv-cmd">$</span><span>${esc(command)}</span>`);
+    shellState.busy = true; $("#shellRun").disabled = true;
+    try {
+      const r = await api("/api/shell", { method: "POST", body: JSON.stringify({ command }) });
+      if (r.status === 401) { showLogin(); return; }
+      if (!r.ok || !r.data) { shellLine(esc(r.data?.error || `Gagal (HTTP ${r.status})`), "shell-err"); return; }
+      const d = r.data;
+      if (d.stdout) shellLine(`<pre>${esc(d.stdout)}</pre>`);
+      if (d.stderr) shellLine(`<pre>${esc(d.stderr)}</pre>`, "shell-err");
+      shellLine(`${d.timedOut ? "dihentikan: melewati batas waktu" : `kode keluar ${d.code ?? d.signal ?? "-"}`} · ${d.durationMs} ms${d.truncated ? " · output dipotong" : ""}`, "muted");
+    } catch (error) { shellLine(esc(`Tidak bisa menghubungi server: ${error.message}`), "shell-err"); }
+    finally { shellState.busy = false; $("#shellRun").disabled = false; input.focus(); }
+  });
+  $("#shellInput")?.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return; e.preventDefault();
+    const h = shellState.history; if (!h.length) return;
+    shellState.index = Math.max(0, Math.min(h.length, shellState.index + (e.key === "ArrowUp" ? -1 : 1)));
+    e.target.value = h[shellState.index] || "";
+  });
+  $("#shellClear")?.addEventListener("click", () => { $("#shellOutput").innerHTML = ""; });
 
   function setOffline(off) { state.online = !off; $("#offlineNote").hidden = !off; }
 

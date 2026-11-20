@@ -3,7 +3,7 @@ module.exports = {
     name: "menu",
     aliases: ["help"],
     cooldown: 5,
-    description: "Daftar command berdasarkan kategori atau detail command",
+    description: "Menampilkan daftar command per kategori atau detail satu command",
     usage: "menu [nama command]",
     category: "Helper",
     price: 0,

@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "unregist",
     cooldown: 5,
-    description: "Batalkan registrasi grup ini",
+    description: "Membatalkan pendaftaran grup ini",
     category: "Admin Grup",
     price: 0,
     role: 2,

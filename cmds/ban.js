@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "ban",
     cooldown: 3,
-    description: "Banned user (mention / reply / nomor)",
+    description: "Memblokir user dari penggunaan bot melalui mention, balasan, atau nomor",
     usage: "ban <@tag | reply | nomor> [alasan]",
     category: "Moderasi",
     price: 0,

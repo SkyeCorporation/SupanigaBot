@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "ping",
     cooldown: 10,
-    description: "Cek kecepatan respon bot",
+    description: "Memeriksa kecepatan respons bot",
     category: "Umum",
     price: 0,
     role: 0,

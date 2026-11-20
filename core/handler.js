@@ -9,8 +9,10 @@ import { log } from "./logger.js";
 import { resolveNumber, numberToJid, normalizeNumber, maskNumber } from "./number.js";
 import { getRoleLevel, shouldRespond, hasPermission, isFreeOfCharge, ROLE_NAMES } from "./permissions.js";
 import { state, bus } from "./state.js";
+import { EXP_PER_COMMAND, EXP_PER_MESSAGE, MESSAGE_EXP_COOLDOWN_MS } from "./level.js";
 
 const cooldowns = new Map();
+const messageExpAt = new Map();
 const groupCache = new Map();
 const GROUP_TTL = 5 * 60 * 1000;
 
@@ -132,12 +134,7 @@ export async function handleMessage(sock, msg) {
   // Route plain chat to pending PIN/YTA selections (user just types "1" or
   // "1, 2, 3", no reply needed) and replies to the exact Esdeath response.
   if (!isCommand && text) {
-    // Bila beberapa command menunggu pilihan (mis. PIN lalu YTA), yang terbaru menang.
-    const since = (cmd) => {
-      try { return Number(cmd.pendingSince?.(chatJid, nomor)) || 0; } catch { return 0; }
-    };
-    const replyOrder = [...commandList].sort((a, b) => since(b) - since(a));
-    for (const replyCommand of replyOrder) {
+    for (const replyCommand of commandList) {
       const hasPending = replyCommand.hasPendingSelection || replyCommand.hasPendingReply;
       if (typeof hasPending !== "function") continue;
       if (!replyCommand.hasPendingSelection && !quotedMessageId) continue;
@@ -166,7 +163,10 @@ export async function handleMessage(sock, msg) {
     }
   }
 
-  if (!isCommand) return;
+  if (!isCommand) {
+    if (text) await grantMessageExp(api, nomor);
+    return;
+  }
   const command = commands.get(commandName);
   const where = isGroup ? `grup "${group?.groupName}" (GID ${group?.gid})` : "chat pribadi";
   // Unknown commands are ignored to prevent repeated typo/legacy command spam.
@@ -216,6 +216,7 @@ export async function handleMessage(sock, msg) {
       commands: commandList,
       utils: { normalizeNumber, maskNumber, numberToJid, ROLE_NAMES, uptime: () => Date.now() - state.startedAt },
     });
+    await grantExp(api, nomor, EXP_PER_COMMAND);
   } catch (error) {
     state.stats.errors++;
     if (charged) await usersData.addMoney(nomor, charged);
@@ -223,6 +224,24 @@ export async function handleMessage(sock, msg) {
     log.error(`Error di command ${cfg.name}: ${detail}`);
     await api.reply(`❌ Error ${cfg.name}: ${detail}`).catch(() => {});
   }
+}
+
+/** Tambah EXP dan umumkan kenaikan level. Kegagalan EXP tidak boleh mengganggu command. */
+async function grantExp(api, nomor, amount) {
+  try {
+    const { user, leveledUp } = await usersData.addExp(nomor, amount);
+    if (leveledUp > 0) await api.reply(`Selamat, ${user.nama}. Level Anda naik menjadi Level ${user.level}.`);
+  } catch (error) {
+    log.warn(`Gagal menambah EXP: ${errorText(error)}`);
+  }
+}
+
+async function grantMessageExp(api, nomor) {
+  const last = messageExpAt.get(nomor) || 0;
+  if (Date.now() - last < MESSAGE_EXP_COOLDOWN_MS) return;
+  messageExpAt.set(nomor, Date.now());
+  if (messageExpAt.size > 5000) messageExpAt.delete(messageExpAt.keys().next().value);
+  await grantExp(api, nomor, EXP_PER_MESSAGE);
 }
 
 function toContent(content) {
@@ -246,6 +265,24 @@ export function createApi(sock, msg, chatJid) {
     },
     async react(emoji) {
       return sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } });
+    },
+    /** Indikator "sedang mengetik" (composing) atau berhenti (paused). */
+    async typing(active = true, jid = chatJid) {
+      try {
+        await sock.sendPresenceUpdate(active ? "composing" : "paused", jid);
+      } catch {
+        /* indikator bersifat opsional */
+      }
+    },
+    /** URL foto profil WhatsApp untuk nomor tertentu, atau null bila disembunyikan. */
+    async profilePictureUrl(number) {
+      const jid = numberToJid(number);
+      if (!jid) return null;
+      try {
+        return (await sock.profilePictureUrl(jid, "image")) || null;
+      } catch {
+        return null;
+      }
     },
     async getGroupMeta(jid = chatJid, force = false) {
       return getGroupMeta(sock, jid, force);

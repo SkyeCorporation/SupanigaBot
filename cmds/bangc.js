@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "bangc",
     cooldown: 3,
-    description: "Banned grup ini",
+    description: "Memblokir grup ini dari penggunaan bot",
     usage: "bangc [alasan]",
     category: "Moderasi",
     price: 0,

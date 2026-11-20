@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "regist",
     cooldown: 5,
-    description: "Daftarkan grup ini agar bot aktif",
+    description: "Mendaftarkan grup ini agar bot dapat digunakan",
     category: "Admin Grup",
     price: 0,
     role: 2,

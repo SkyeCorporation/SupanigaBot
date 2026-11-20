@@ -3,7 +3,8 @@
  * - `yta <judul>`  : tampilkan 10 hasil YouTube, user cukup ketik angka (tanpa reply).
  * - `yta <link>`   : langsung unduh audio dan kirim ke WhatsApp.
  * - `yta cek`      : tampilkan status yt-dlp/ffmpeg di hosting.
- * Pencarian memakai node module `yt-search`; unduhan memakai yt-dlp (YTDLP_PATH, binary resmi
+ * Pencarian memakai node module `youtubei.js` (cadangan: `yt-search`); pilihan nomor memakai
+ * registri bersama ./lib/selection sehingga angka tidak tertangkap command lain (pin/pixiv). Unduhan memakai yt-dlp (YTDLP_PATH, binary resmi
  * yang diunduh otomatis, yt-dlp sistem, atau versi Python) lalu diubah ke MP3 dengan ffmpeg agar pasti
  * bisa diputar di WhatsApp. ffmpeg dicari berurutan: FFMPEG_PATH, @ffmpeg-installer/ffmpeg,
  * ffmpeg di sistem, lalu unduh otomatis. Bila semuanya gagal, audio dikirim apa adanya (M4A). File disimpan sementara di folder bot `tmp/yta/`
@@ -14,17 +15,16 @@ const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
-const yts = require("yt-search");
 const zlib = require("node:zlib");
+const selection = require("./lib/selection");
 
 const MAX_RESULTS = 10;
 const MAX_AUDIO_MB = 50;
 const MAX_DURATION_SEC = 30 * 60;
 const SELECTION_TTL_MS = 10 * 60 * 1000;
 const BINARY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const pendingSelections = new Map();
 
-const YTA_VERSION = "2026.11.18";
+const YTA_VERSION = "2026.11.19";
 const ROOT_DIR = path.join(__dirname, "..");
 const WORK_DIR = path.join(ROOT_DIR, "tmp", "yta");
 // Folder sementara untuk proses yt-dlp sendiri (dipakai saat binary mengekstrak dirinya),
@@ -49,20 +49,48 @@ let binDirPromise = null;
 let ytdlpPromise = null;
 let ffmpegPromise = null;
 
-// Chat pribadi bisa datang sebagai @lid atau @s.whatsapp.net; kunci pakai nomor saja.
-function selectionKey(chatJid, senderNumber) {
-  return `${String(chatJid).endsWith("@g.us") ? chatJid : "dm"}:${senderNumber}`;
-}
-const PICK_RE = /^\s*(\d{1,2})\s*[.)]?\s*$/;
 function clean(value, maxLength = 140) {
   return String(value || "Unknown").replace(/[\r\n\t]+/g, " ").trim().slice(0, maxLength);
 }
 function errorText(error) {
   return String(error?.message || error || "Kesalahan tidak diketahui").replace(/[\r\n\t]+/g, " ").slice(0, 700);
 }
-function prune() {
-  const now = Date.now();
-  for (const [key, value] of pendingSelections) if (value.expiresAt <= now) pendingSelections.delete(key);
+let innertubePromise = null;
+/** Klien YouTube (youtubei.js) untuk pencarian; dibuat sekali lalu dipakai ulang. */
+function innertube() {
+  if (!innertubePromise) {
+    innertubePromise = import("youtubei.js")
+      .then(({ Innertube }) => Innertube.create({ retrieve_player: false, generate_session_locally: true }))
+      .catch((error) => { innertubePromise = null; throw error; });
+  }
+  return innertubePromise;
+}
+
+/** Cari video YouTube. Mengembalikan [{ videoId, title, author, seconds, timestamp }]. */
+async function searchVideos(query) {
+  try {
+    const yt = await innertube();
+    const found = await yt.search(query, { type: "video" });
+    const videos = (found.videos || found.results || [])
+      .filter((v) => v?.type === "Video" || v?.id)
+      .map((v) => ({
+        videoId: String(v.video_id || v.id || ""),
+        title: String(v.title?.text || v.title || ""),
+        author: String(v.author?.name || ""),
+        seconds: Number(v.duration?.seconds) || 0,
+        timestamp: String(v.duration?.text || ""),
+      }))
+      .filter((v) => /^[A-Za-z0-9_-]{11}$/.test(v.videoId) && v.seconds > 0);
+    if (videos.length) return videos.slice(0, MAX_RESULTS);
+  } catch (error) {
+    console.warn(`[yta] Pencarian youtubei.js gagal, memakai yt-search: ${errorText(error)}`);
+  }
+  const yts = require("yt-search");
+  const found = await yts({ query, pages: 1 });
+  return (found.videos || [])
+    .filter((v) => v.videoId && v.seconds > 0)
+    .slice(0, MAX_RESULTS)
+    .map((v) => ({ videoId: v.videoId, title: v.title, author: v.author?.name || "", seconds: v.seconds, timestamp: v.timestamp || "" }));
 }
 
 /** Ambil ID video dari link YouTube (watch, youtu.be, shorts, music, embed, live). */
@@ -381,8 +409,8 @@ module.exports = {
     name: "yta",
     aliases: [],
     cooldown: 5,
-    description: "Cari lagu YouTube atau kirim link, lalu bot mengirim audionya",
-    usage: "yta <judul | link YouTube>, lalu ketik nomor 1-10. yta cek untuk status",
+    description: "Mencari lagu di YouTube atau menerima link, lalu mengirimkan audionya",
+    usage: "yta <judul | link YouTube>, lalu ketik nomor 1-10. Gunakan yta cek untuk status",
     category: "Media",
     price: 0,
     role: 0,
@@ -393,25 +421,20 @@ module.exports = {
   _ffmpegBinary: ffmpegBinary,
   _ytdlpBinary: ytdlpBinary,
   _statusText: statusText,
+  _searchVideos: searchVideos,
   hasPendingSelection(chatJid, senderNumber, _quotedMessageId, text = "") {
-    prune();
-    return PICK_RE.test(String(text)) && pendingSelections.has(selectionKey(chatJid, senderNumber));
-  },
-  pendingSince(chatJid, senderNumber) {
-    return pendingSelections.get(selectionKey(chatJid, senderNumber))?.createdAt || 0;
+    return !!selection.parseNumbers(text, { multiple: false }) && !!selection.get(chatJid, senderNumber, "yta");
   },
   onReply: async function ({ api, event, text }) {
-    prune();
-    const key = selectionKey(event.chatJid, event.senderNumber);
-    const pending = pendingSelections.get(key);
-    if (!pending) return false;
-    const index = Number(String(text).match(PICK_RE)?.[1]) - 1;
-    const video = pending.results[index];
+    const pending = selection.get(event.chatJid, event.senderNumber, "yta");
+    const numbers = selection.parseNumbers(text, { multiple: false });
+    if (!pending || !numbers) return false;
+    const video = pending.results[numbers[0] - 1];
     if (!video) {
       await api.reply(`Nomor tidak tersedia. Pilih 1-${pending.results.length}.`);
       return true;
     }
-    pendingSelections.delete(key);
+    selection.clear(event.chatJid, event.senderNumber, "yta");
     try {
       await sendAudio(api, video.videoId);
     } catch (error) {
@@ -422,7 +445,6 @@ module.exports = {
     return true;
   },
   onStart: async function ({ api, args, event, prefix }) {
-    prune();
     const query = args.join(" ").trim();
     if (query.toLowerCase() === "cek") return api.reply(await statusText());
     if (!query) return api.reply(`Gunakan: ${prefix}yta <judul lagu | link YouTube>\nContoh: ${prefix}yta cruel angel thesis`);
@@ -434,17 +456,15 @@ module.exports = {
       if (/^https?:\/\//i.test(query)) return api.reply("Link itu bukan link video YouTube yang valid.");
 
       await api.reply(`Mencari "${clean(query, 80)}" di YouTube...`);
-      const found = await yts({ query, pages: 1 });
-      const results = (found.videos || []).filter((v) => v.videoId && v.seconds > 0).slice(0, MAX_RESULTS);
+      const results = await searchVideos(query);
       if (!results.length) return api.reply("Tidak ada video YouTube untuk kata kunci itu.");
 
-      const lines = results.map((v, i) => `${i + 1}. ${clean(v.title, 90)}\n    ${clean(v.author?.name, 50)} | ${v.timestamp || formatDuration(v.seconds)}`);
-      await api.reply(`*Hasil YouTube: ${clean(query, 60)}*\n\n${lines.join("\n\n")}\n\nKetik nomor 1-${results.length} untuk mengunduh audio.\nBerlaku 10 menit.`);
-      pendingSelections.set(selectionKey(event.chatJid, event.senderNumber), {
+      const lines = results.map((v, i) => `${i + 1}. ${clean(v.title, 90)}\n    ${clean(v.author, 50)} | ${v.timestamp || formatDuration(v.seconds)}`);
+      // Simpan pilihan sebelum mengirim daftar, supaya angka yang diketik cepat tetap diterima.
+      selection.set(event.chatJid, event.senderNumber, "yta", {
         results: results.map((v) => ({ videoId: v.videoId, title: v.title })),
-        createdAt: Date.now(),
-        expiresAt: Date.now() + SELECTION_TTL_MS,
-      });
+      }, SELECTION_TTL_MS);
+      await api.reply(`*Hasil YouTube: ${clean(query, 60)}*\n\n${lines.join("\n\n")}\n\nKetik nomor 1-${results.length} untuk mengunduh audio.\nBerlaku 10 menit.`);
     } catch (error) {
       const detail = errorText(error);
       console.error(`[yta] ${detail}`);

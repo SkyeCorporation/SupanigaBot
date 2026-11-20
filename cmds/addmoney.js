@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "addmoney",
     cooldown: 2,
-    description: "Tambah saldo user",
+    description: "Menambahkan saldo kepada user tertentu",
     usage: "addmoney <@tag | reply | nomor> <jumlah>",
     category: "Admin",
     price: 0,

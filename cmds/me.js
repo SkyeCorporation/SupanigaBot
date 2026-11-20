@@ -3,7 +3,7 @@ module.exports = {
     name: "me",
     aliases: ["profile", "saldo"],
     cooldown: 5,
-    description: "Lihat profil & saldo kamu",
+    description: "Menampilkan profil dan saldo Anda",
     category: "User",
     price: 0,
     role: 0,

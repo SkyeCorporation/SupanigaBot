@@ -14,6 +14,7 @@ import { systemInfo } from "./system.js";
 import { publicCommands, loadCommands } from "./commands.js";
 import { usersData, groupsData } from "./database.js";
 import { logoutBot } from "./bot.js";
+import { runShell, shellEnabled } from "./shell.js";
 
 const COOKIE = "penguin_sid";
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -223,6 +224,22 @@ export function startWeb() {
       res.json({ ok: true, path: relativePath, sha256: fileHash(content), size: Buffer.byteLength(content, "utf8") });
     } catch (error) {
       res.status(error.status || 500).json({ error: error.message || "Gagal menyimpan file." });
+    }
+  });
+
+  // Shell admin: hanya untuk sesi dashboard yang sudah login dan dari origin yang sama.
+  app.get("/api/shell", requireAuth, (_req, res) => res.json({ enabled: shellEnabled(), cwd: ROOT }));
+  app.post("/api/shell", requireAuth, requireSameOrigin, async (req, res) => {
+    const command = typeof req.body?.command === "string" ? req.body.command.trim() : "";
+    if (!command) return res.status(400).json({ error: "Perintah shell kosong." });
+    if (command.length > 4000) return res.status(400).json({ error: "Perintah terlalu panjang (maksimal 4000 karakter)." });
+    if (!shellEnabled()) return res.status(403).json({ error: "Fitur shell dinonaktifkan (DISABLE_SHELL)." });
+    log.warn(`Shell dari dashboard: ${command.slice(0, 300)}`);
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      res.json(await runShell(command));
+    } catch (error) {
+      res.status(500).json({ error: error.message || "Gagal menjalankan perintah." });
     }
   });
 

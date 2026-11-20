@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "unban",
     cooldown: 3,
-    description: "Buka banned user",
+    description: "Membuka blokir user",
     usage: "unban <@tag | reply | nomor>",
     category: "Moderasi",
     price: 0,

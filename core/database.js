@@ -7,6 +7,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { DATABASE_DIR } from "./paths.js";
 import { normalizeNumber } from "./number.js";
+import { applyExp, expToNext } from "./level.js";
 
 let db = null;
 
@@ -37,6 +38,10 @@ export function initDatabase(file = process.env.DATABASE_FILE || path.join(DATAB
       updatedAt    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  // Migrasi: kolom level & EXP untuk database lama.
+  const columns = new Set(db.prepare("PRAGMA table_info(users)").all().map((c) => c.name));
+  if (!columns.has("level")) db.exec("ALTER TABLE users ADD COLUMN level INTEGER NOT NULL DEFAULT 1");
+  if (!columns.has("exp")) db.exec("ALTER TABLE users ADD COLUMN exp INTEGER NOT NULL DEFAULT 0");
   return db;
 }
 
@@ -54,6 +59,9 @@ function toUser(row) {
     nama: row.nama,
     userID: row.userID,
     money: row.money,
+    level: row.level ?? 1,
+    exp: row.exp ?? 0,
+    expToNext: expToNext(row.level ?? 1),
     status: { banned: !!row.banned, bannedReason: row.bannedReason || null },
     createdAt: row.createdAt,
   };
@@ -114,6 +122,41 @@ export const usersData = {
   async subtractMoney(nomor, amount) {
     const u = await this.getOrCreate(nomor);
     return this.set(u.nomor, { money: u.money - Math.trunc(Number(amount) || 0) });
+  },
+  /** Tambah EXP; mengembalikan { user, leveledUp } (leveledUp = jumlah kenaikan level). */
+  async addExp(nomor, amount) {
+    const u = await this.getOrCreate(nomor);
+    const next = applyExp(u.level, u.exp, amount);
+    getDb()
+      .prepare("UPDATE users SET level=?, exp=?, updatedAt=CURRENT_TIMESTAMP WHERE nomor=?")
+      .run(next.level, next.exp, u.nomor);
+    return { user: await this.get(u.nomor), leveledUp: next.leveledUp };
+  },
+  /**
+   * Transfer uang antar user secara atomik.
+   * Error (properti `code`): INVALID_AMOUNT, SELF_TRANSFER, SENDER_NOT_FOUND, TARGET_NOT_FOUND, INSUFFICIENT_FUNDS.
+   */
+  async transfer(fromNomor, toNomor, amount) {
+    const value = Number(amount);
+    const fail = (code, message) => Object.assign(new Error(message), { code });
+    if (!Number.isSafeInteger(value) || value <= 0) throw fail("INVALID_AMOUNT", "Jumlah harus bilangan bulat lebih dari 0.");
+    const from = normalizeNumber(fromNomor);
+    const to = normalizeNumber(toNomor);
+    if (!from) throw fail("SENDER_NOT_FOUND", "Pengirim tidak ditemukan.");
+    if (!to) throw fail("TARGET_NOT_FOUND", "Penerima tidak ditemukan.");
+    if (from === to) throw fail("SELF_TRANSFER", "Tidak dapat mengirim uang ke diri sendiri.");
+    const database = getDb();
+    const run = database.transaction(() => {
+      const sender = database.prepare("SELECT * FROM users WHERE nomor = ?").get(from);
+      const target = database.prepare("SELECT * FROM users WHERE nomor = ?").get(to);
+      if (!sender) throw fail("SENDER_NOT_FOUND", "Pengirim tidak ditemukan.");
+      if (!target) throw fail("TARGET_NOT_FOUND", "Penerima tidak ditemukan.");
+      if (sender.money < value) throw fail("INSUFFICIENT_FUNDS", "Saldo tidak mencukupi.");
+      database.prepare("UPDATE users SET money = money - ?, updatedAt=CURRENT_TIMESTAMP WHERE nomor = ?").run(value, from);
+      database.prepare("UPDATE users SET money = money + ?, updatedAt=CURRENT_TIMESTAMP WHERE nomor = ?").run(value, to);
+    });
+    run();
+    return { from: await this.get(from), to: await this.get(to) };
   },
   async ban(nomor, reason = null) {
     return this.set(nomor, { status: { banned: true, bannedReason: reason } });

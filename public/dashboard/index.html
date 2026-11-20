@@ -187,6 +187,22 @@
           <p class="console-note mono">🔒 Nomor WhatsApp orang lain otomatis disensor — hanya nomor bot yang terhubung yang ditampilkan.</p>
         </article>
 
+        <!-- SHELL -->
+        <article class="card glass shell-card span-12 reveal">
+          <div class="card-head">
+            <h3><span class="dots"><i></i><i></i><i></i></span> Shell</h3>
+            <span class="mono tag" id="shellCwd">—</span>
+          </div>
+          <div class="console shell-output mono" id="shellOutput" role="log" aria-live="polite"><div class="line muted">Jalankan perintah di server bot. Gunakan panah atas/bawah untuk riwayat.</div></div>
+          <form class="shell-form" id="shellForm" autocomplete="off">
+            <span class="shell-prompt mono">$</span>
+            <input id="shellInput" class="shell-input mono" type="text" placeholder="contoh: ls -la" aria-label="Perintah shell" spellcheck="false" />
+            <button class="btn btn-primary sm" id="shellRun" type="submit">Jalankan</button>
+            <button class="btn btn-ghost sm" id="shellClear" type="button">Bersihkan</button>
+          </form>
+          <p class="console-note mono">Hanya untuk admin. Perintah dijalankan langsung di server dengan batas waktu 60 detik dan setiap perintah dicatat di console.</p>
+        </article>
+
         <!-- COMMANDS -->
         <article class="card glass span-8 reveal">
           <div class="card-head">

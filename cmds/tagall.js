@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "tagall",
     cooldown: 60,
-    description: "Mention semua anggota grup",
+    description: "Menyebut seluruh anggota grup",
     usage: "tagall [pesan]",
     category: "Admin Grup",
     price: 0,

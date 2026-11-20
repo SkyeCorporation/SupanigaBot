@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "unbangc",
     cooldown: 3,
-    description: "Buka banned grup ini",
+    description: "Membuka blokir grup ini",
     category: "Moderasi",
     price: 0,
     role: 2,
