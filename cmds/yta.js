@@ -1,474 +1,333 @@
 /**
- * YTA — YouTube audio.
- * - `yta <judul>`  : tampilkan 10 hasil YouTube, user cukup ketik angka (tanpa reply).
- * - `yta <link>`   : langsung unduh audio dan kirim ke WhatsApp.
- * - `yta cek`      : tampilkan status yt-dlp/ffmpeg di hosting.
- * Pencarian memakai node module `youtubei.js` (cadangan: `yt-search`); pilihan nomor memakai
- * registri bersama ./lib/selection sehingga angka tidak tertangkap command lain (pin/pixiv). Unduhan memakai yt-dlp (YTDLP_PATH, binary resmi
- * yang diunduh otomatis, yt-dlp sistem, atau versi Python) lalu diubah ke MP3 dengan ffmpeg agar pasti
- * bisa diputar di WhatsApp. ffmpeg dicari berurutan: FFMPEG_PATH, @ffmpeg-installer/ffmpeg,
- * ffmpeg di sistem, lalu unduh otomatis. Bila semuanya gagal, audio dikirim apa adanya (M4A). File disimpan sementara di folder bot `tmp/yta/`
- * dan dihapus setelah terkirim (juga dibersihkan saat bot start).
+ * YTA — yt-dlp + cookies + proxy (multi client)
  */
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
-const zlib = require("node:zlib");
 const selection = require("./lib/selection");
 
+// ====================== PROXY & COOKIES ======================
+const PROXY_URL = "http://ramylxhg:fgqixyhrzmzg@45.38.107.97:6014";
+
+const HARDCODED_COOKIES = `# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	TRUE	1810872115	__Secure-YNID	CuwBCAUSngEBDB6PDGhvolxWJIvaRht1SYFgFVuzdFdYdIxfF_9F1rUB9rL1W6itr6tRArRJ1e8Gr8Bf3omx8MIN8fufSstV6WipWyT089fhd301iIKlNDeWFi_5KnBJCJi8XydwmWf5Hyy4uKs23eklWFbkOvV6oQe4TjXvnE3qVA9srUutG-NcPDRZsEVGAkBl5Zo-mMOc0jBwvYnE8BXZG8nA1igFMkUBHFj1aq17-zhWMcaD61XVJAiXQFjHYWv-nJ0E6yR5rfDkYIAW2StJQPgZqxr1w_JTsc6aAFH6y4jkmpP_edkz_UBVKAc
+.youtube.com	TRUE	/	TRUE	1810877203	VISITOR_INFO1_LIVE	7-bzwGi-cK0
+.youtube.com	TRUE	/	TRUE	1810877203	VISITOR_PRIVACY_METADATA	CgJJRBIEGgAgYQ%3D%3D
+.youtube.com	TRUE	/	TRUE	1829885206	PREF	f4=4010000&f6=40000000&tz=Asia.Tokyo&f7=100
+.youtube.com	TRUE	/	TRUE	1826860931	__Secure-1PSIDTS	sidts-CjQBnJZzav6Af-p_IoaCqBd4_RUaCTCckeJJEhp79QComkF_P3IoWIFL_1jqeaUlx5_wEzkeEAA
+.youtube.com	TRUE	/	TRUE	1826860931	__Secure-3PSIDTS	sidts-CjQBnJZzav6Af-p_IoaCqBd4_RUaCTCckeJJEhp79QComkF_P3IoWIFL_1jqeaUlx5_wEzkeEAA
+.youtube.com	TRUE	/	FALSE	1829738731	HSID	A9s9yq0uD3pUsyG8i
+.youtube.com	TRUE	/	TRUE	1829738731	SSID	AzN8fi3hC7wWUzgIj
+.youtube.com	TRUE	/	FALSE	1829738731	APISID	6f5c7Qa2pL80suGn/Axmbh8tcUApK0BrrX
+.youtube.com	TRUE	/	TRUE	1829738731	SAPISID	rB1eg_7as7qFFGCG/ATztkrOYpb9qZmHdc
+.youtube.com	TRUE	/	TRUE	1829738731	__Secure-1PAPISID	rB1eg_7as7qFFGCG/ATztkrOYpb9qZmHdc
+.youtube.com	TRUE	/	TRUE	1829738731	__Secure-3PAPISID	rB1eg_7as7qFFGCG/ATztkrOYpb9qZmHdc
+.youtube.com	TRUE	/	FALSE	1829738731	SID	g.a000FAmZsqy7x8ykR8TIY9fpp6q-o7lGtVTNC2sfQ7oi1fmzznHc3DOIEaADhhzDpNhG8F8YTAACgYKAfMSARUSFQHGX2MiwgKuFOAvXU92WlTzz2rZZxoVAUF8yKqWE0cjlGiDow01XgVNPvfq0076
+.youtube.com	TRUE	/	TRUE	1829738731	__Secure-1PSID	g.a000FAmZsqy7x8ykR8TIY9fpp6q-o7lGtVTNC2sfQ7oi1fmzznHcA3rsVIMbqcYOvVzLte5AYgACgYKAQESARUSFQHGX2MiBhOox2AFJOSIu-bVxF_gsxoVAUF8yKqKYLij_CekJ7temWim_ja70076
+.youtube.com	TRUE	/	TRUE	1829738731	__Secure-3PSID	g.a000FAmZsqy7x8ykR8TIY9fpp6q-o7lGtVTNC2sfQ7oi1fmzznHcYRN6RCTqiS9JthefyKQEDwACgYKASgSARUSFQHGX2MiYcpjkyzKwocer9gkAFDU7RoVAUF8yKqHRknZyEIHGwH1zLchxnBJ0076
+.youtube.com	TRUE	/	TRUE	1829738731	LOGIN_INFO	AFmmF2swRgIhAJGe4tHPASrasTBfWqRkhxisJ9qJ2H5ooAJpZ50dqC3KAiEAz3CbDCecwEh3s8_cP1ArFuUjC-PCSj_E2SYyXE1qwaY:QUQ3MjNmeGgxRlNIRU5fb3lUazI4d2R5WVNMTEJYUUM3ZEd2dGh6TUJnRkxiNjFadE9jNXp4Y2c4Y1padnRyMjRxYlRNMmpDZ0gtWjlBVVN6cmdsN1hwbkt6emVscWEzSEM5QzFaNk00aHo1Smk5cDhYckN6Tk1PUUN5UEtCeHFaSXFKLWZVTFk0NlYyaDMxSlRLNXl4WGl5bGlGcVByaUp3
+.youtube.com	TRUE	/	FALSE	1826861212	SIDCC	APD_SKEPukeAdr0ZxXwj8ZKInkpwNznCvChZ9yoVn97A3dM0q9P6OWcL_P_1AyHoQVDTT47HWA
+.youtube.com	TRUE	/	TRUE	1826861212	__Secure-1PSIDCC	APD_SKGym4UmjQ--scXhEgTMwIhyYw_kmQwjK4MyBCg2wWsW8QtfiODscMkue4bl6G_B84ZPVw
+.youtube.com	TRUE	/	TRUE	1826861212	__Secure-3PSIDCC	APD_SKEfBk25_HCS94CVhX5dHRvhdO0pJZT8EOipZ_7_ortWnwiI5a7SoPUIfNJQ5GJ2ae_ZXGU
+.youtube.com	TRUE	/	TRUE	0	YSC	wrtmW-cN0E0
+`;
+// =============================================================
+
 const MAX_RESULTS = 10;
-const MAX_AUDIO_MB = 50;
-const MAX_DURATION_SEC = 30 * 60;
 const SELECTION_TTL_MS = 10 * 60 * 1000;
-const BINARY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const WORK_DIR = path.join(__dirname, "..", "tmp", "yta");
+const MAX_AUDIO_MB = 30;
+const MAX_DURATION_SEC = 30 * 60;
 
-const YTA_VERSION = "2026.11.19";
-const ROOT_DIR = path.join(__dirname, "..");
-const WORK_DIR = path.join(ROOT_DIR, "tmp", "yta");
-// Folder sementara untuk proses yt-dlp sendiri (dipakai saat binary mengekstrak dirinya),
-// supaya tidak bergantung pada /tmp hosting yang bisa penuh atau dikunci.
-const PROC_TMP = path.join(ROOT_DIR, "tmp", "yta-proc");
-// Sisa unduhan lama (mis. bot mati di tengah unduhan) dibuang saat command dimuat.
-// Hanya yang lebih dari 1 jam, supaya reload tidak menghapus unduhan yang sedang jalan.
-for (const dir of [WORK_DIR, PROC_TMP]) {
+try {
+  fs.mkdirSync(WORK_DIR, { recursive: true });
+} catch {}
+
+function clean(text, max = 120) {
+  return String(text || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, max);
+}
+
+function errorText(err) {
+  return String(err?.message || err || "Unknown error").replace(/[\r\n\t]+/g, " ").slice(0, 400);
+}
+
+function youtubeId(input) {
   try {
-    for (const name of fs.readdirSync(dir)) {
-      const target = path.join(dir, name);
-      if (Date.now() - fs.statSync(target).mtimeMs > 60 * 60 * 1000) fs.rmSync(target, { recursive: true, force: true });
+    const url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+    const host = url.hostname.replace(/^(www|m|music)\./, "");
+    let id = null;
+    if (host === "youtu.be") id = url.pathname.split("/")[1];
+    else if (host === "youtube.com" || host === "youtube-nocookie.com") {
+      id = url.searchParams.get("v") || url.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/?#]+)/)?.[1];
     }
-  } catch {}
-}
-const RELEASE = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
-const FFMPEG_RELEASE = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/";
-// Urutan client YouTube yang dicoba (null = bawaan yt-dlp).
-const PLAYER_CLIENTS = [null, "web_embedded", "tv_simply"];
-const EXE = process.platform === "win32" ? ".exe" : "";
-let binDirPromise = null;
-let ytdlpPromise = null;
-let ffmpegPromise = null;
-
-function clean(value, maxLength = 140) {
-  return String(value || "Unknown").replace(/[\r\n\t]+/g, " ").trim().slice(0, maxLength);
-}
-function errorText(error) {
-  return String(error?.message || error || "Kesalahan tidak diketahui").replace(/[\r\n\t]+/g, " ").slice(0, 700);
-}
-let innertubePromise = null;
-/** Klien YouTube (youtubei.js) untuk pencarian; dibuat sekali lalu dipakai ulang. */
-function innertube() {
-  if (!innertubePromise) {
-    innertubePromise = import("youtubei.js")
-      .then(({ Innertube }) => Innertube.create({ retrieve_player: false, generate_session_locally: true }))
-      .catch((error) => { innertubePromise = null; throw error; });
+    return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+  } catch {
+    return null;
   }
-  return innertubePromise;
 }
 
-/** Cari video YouTube. Mengembalikan [{ videoId, title, author, seconds, timestamp }]. */
 async function searchVideos(query) {
-  try {
-    const yt = await innertube();
-    const found = await yt.search(query, { type: "video" });
-    const videos = (found.videos || found.results || [])
-      .filter((v) => v?.type === "Video" || v?.id)
-      .map((v) => ({
-        videoId: String(v.video_id || v.id || ""),
-        title: String(v.title?.text || v.title || ""),
-        author: String(v.author?.name || ""),
-        seconds: Number(v.duration?.seconds) || 0,
-        timestamp: String(v.duration?.text || ""),
-      }))
-      .filter((v) => /^[A-Za-z0-9_-]{11}$/.test(v.videoId) && v.seconds > 0);
-    if (videos.length) return videos.slice(0, MAX_RESULTS);
-  } catch (error) {
-    console.warn(`[yta] Pencarian youtubei.js gagal, memakai yt-search: ${errorText(error)}`);
-  }
   const yts = require("yt-search");
   const found = await yts({ query, pages: 1 });
   return (found.videos || [])
-    .filter((v) => v.videoId && v.seconds > 0)
+    .filter((v) => v.videoId && v.seconds > 0 && v.seconds <= MAX_DURATION_SEC)
     .slice(0, MAX_RESULTS)
-    .map((v) => ({ videoId: v.videoId, title: v.title, author: v.author?.name || "", seconds: v.seconds, timestamp: v.timestamp || "" }));
-}
-
-/** Ambil ID video dari link YouTube (watch, youtu.be, shorts, music, embed, live). */
-function youtubeId(input) {
-  let url;
-  try { url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`); } catch { return null; }
-  const host = url.hostname.replace(/^(www|m|music)\./, "");
-  let id = null;
-  if (host === "youtu.be") id = url.pathname.split("/")[1];
-  else if (host === "youtube.com" || host === "youtube-nocookie.com") {
-    id = url.searchParams.get("v") || url.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/?#]+)/)?.[1];
-  }
-  return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-}
-
-/** Folder binary: ~/.cache/supanigabot, atau tmp/bin di folder bot bila home tidak bisa ditulis. */
-function binDir() {
-  if (!binDirPromise) {
-    binDirPromise = (async () => {
-      for (const dir of [path.join(os.homedir(), ".cache", "supanigabot"), path.join(ROOT_DIR, "tmp", "bin")]) {
-        try {
-          await fsp.mkdir(dir, { recursive: true });
-          await fsp.access(dir, fs.constants.W_OK);
-          return dir;
-        } catch {}
-      }
-      throw new Error("Tidak ada folder yang bisa ditulis untuk menyimpan yt-dlp/ffmpeg.");
-    })().catch((error) => { binDirPromise = null; throw error; });
-  }
-  return binDirPromise;
-}
-
-function procEnv() {
-  try { fs.mkdirSync(PROC_TMP, { recursive: true }); } catch {}
-  return { ...process.env, TMPDIR: PROC_TMP, TMP: PROC_TMP, TEMP: PROC_TMP, PYTHONUTF8: "1" };
-}
-
-/** Jalankan program; true bila keluar normal. */
-function works(file, args) {
-  return new Promise((resolve) => {
-    execFile(file, args, { timeout: 60000, windowsHide: true, env: procEnv() }, (error, stdout) => resolve(error ? null : String(stdout).trim() || "ok"));
-  });
-}
-
-/** Pastikan file bisa dieksekusi (npm kadang memasang binary tanpa izin eksekusi). */
-function ensureExecutable(file) {
-  if (process.platform === "win32") return;
-  try { fs.accessSync(file, fs.constants.X_OK); } catch { try { fs.chmodSync(file, 0o755); } catch {} }
-}
-
-async function download(url, target, minBytes, gunzip = false) {
-  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(240000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status} saat mengunduh ${path.basename(target)}`);
-  let buffer = Buffer.from(await response.arrayBuffer());
-  if (gunzip) buffer = zlib.gunzipSync(buffer);
-  if (buffer.length < minBytes) throw new Error(`File ${path.basename(target)} yang diunduh tidak valid.`);
-  const temp = `${target}.${process.pid}.tmp`;
-  await fsp.writeFile(temp, buffer, { mode: 0o755 });
-  await fsp.rename(temp, target);
-  ensureExecutable(target);
-}
-
-function ytdlpAsset() {
-  if (process.platform === "win32") return process.arch === "ia32" ? "yt-dlp_x86.exe" : "yt-dlp.exe";
-  if (process.platform === "darwin") return "yt-dlp_macos";
-  if (process.platform === "linux") {
-    if (process.arch === "arm64") return "yt-dlp_linux_aarch64";
-    if (process.arch === "x64") return "yt-dlp_linux";
-  }
-  return null;
-}
-
-/**
- * Cari yt-dlp yang benar-benar bisa jalan, berurutan:
- * YTDLP_PATH, binary resmi yang diunduh otomatis (diperbarui mingguan),
- * yt-dlp di sistem, lalu versi Python (zipapp) bila ada python3.
- * Mengembalikan { cmd, pre, source, version }.
- */
-function ytdlpBinary() {
-  if (!ytdlpPromise) {
-    ytdlpPromise = (async () => {
-      const tried = [];
-      const check = async (cmd, pre, source) => {
-        const version = await works(cmd, [...pre, "--version"]);
-        if (version) return { cmd, pre, source, version };
-        tried.push(source);
-        return null;
-      };
-      if (process.env.YTDLP_PATH) {
-        const found = await check(process.env.YTDLP_PATH, [], "YTDLP_PATH");
-        if (found) return found;
-      }
-      const dir = await binDir().catch(() => null);
-      const asset = ytdlpAsset();
-      if (dir && asset) {
-        const target = path.join(dir, `yt-dlp${EXE}`);
-        const stat = await fsp.stat(target).catch(() => null);
-        try {
-          if (!stat) await download(RELEASE + asset, target, 1024 * 1024);
-          else if (Date.now() - stat.mtimeMs > BINARY_MAX_AGE_MS) {
-            // YouTube sering berubah; perbarui mingguan, tapi tetap pakai versi lama bila gagal.
-            await download(RELEASE + asset, target, 1024 * 1024).catch((error) => console.warn(`[yta] Update yt-dlp gagal: ${errorText(error)}`));
-          }
-          ensureExecutable(target);
-          let found = await check(target, [], "unduhan otomatis");
-          if (!found && stat) {
-            // File lama rusak/terpotong: unduh ulang sekali.
-            await download(RELEASE + asset, target, 1024 * 1024);
-            found = await check(target, [], "unduhan otomatis");
-          }
-          if (found) return found;
-        } catch (error) {
-          tried.push(`unduhan otomatis (${errorText(error)})`);
-        }
-      }
-      const system = await check(`yt-dlp${EXE}`, [], "yt-dlp sistem");
-      if (system) return system;
-      if (dir) {
-        for (const python of process.platform === "win32" ? ["py", "python"] : ["python3", "python"]) {
-          if (!(await works(python, ["--version"]))) continue;
-          const zipapp = path.join(dir, "yt-dlp.pyz");
-          try {
-            if (!fs.existsSync(zipapp)) await download(RELEASE + "yt-dlp", zipapp, 1024 * 1024);
-            const found = await check(python, [zipapp], `yt-dlp Python (${python})`);
-            if (found) return found;
-          } catch (error) {
-            tried.push(`yt-dlp Python (${errorText(error)})`);
-          }
-          break;
-        }
-      }
-      throw new Error(`yt-dlp tidak bisa dijalankan di hosting ini (dicoba: ${tried.join(", ") || "-"}). Isi YTDLP_PATH dengan yt-dlp yang bisa jalan.`);
-    })().catch((error) => { ytdlpPromise = null; throw error; });
-  }
-  return ytdlpPromise;
-}
-
-function run(file, args, timeout) {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true, env: procEnv() }, (error, stdout, stderr) => {
-      if (error) {
-        const lines = String(stderr || "").split("\n").map((line) => line.trim()).filter(Boolean);
-        const reason = lines.reverse().find((line) => line.startsWith("ERROR")) || lines[0] || error.message;
-        if (/confirm you.re not a bot/i.test(reason)) {
-          return reject(Object.assign(new Error("YouTube memblokir IP server bot (minta verifikasi bukan bot). Isi YTDLP_COOKIES dengan file cookies.txt YouTube, atau jalankan bot di jaringan lain."), { retryable: true }));
-        }
-        const failure = new Error(error.killed ? "Unduhan melewati batas waktu." : reason.replace(/^ERROR:\s*/, ""));
-        failure.retryable = /requested format is not available|page needs to be reloaded|po token|http error 403/i.test(reason);
-        return reject(failure);
-      }
-      resolve(String(stdout));
-    });
-  });
-}
-
-/** Path lengkap program di PATH (yt-dlp butuh path asli untuk --ffmpeg-location, bukan nama saja). */
-function whichSync(name) {
-  const exts = process.platform === "win32" ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""];
-  for (const dir of String(process.env.PATH || "").split(path.delimiter)) {
-    if (!dir) continue;
-    for (const ext of exts) {
-      const file = path.join(dir.replace(/^"|"$/g, ""), name + ext);
-      try { if (fs.statSync(file).isFile()) return file; } catch {}
-    }
-  }
-  return null;
-}
-
-/** Binary siap pakai dari npm (@ffmpeg-installer), tanpa skrip install tambahan. */
-function installerPath() {
-  try {
-    const file = require("@ffmpeg-installer/ffmpeg").path;
-    if (!file || !fs.existsSync(file)) return null;
-    ensureExecutable(file);
-    return file;
-  } catch { return null; }
-}
-
-async function downloadFfmpeg(target) {
-  const arch = { x64: "x64", arm64: "arm64", ia32: "ia32", arm: "arm" }[process.arch];
-  if (!arch || !["win32", "linux", "darwin"].includes(process.platform)) throw new Error(`Platform ${process.platform}/${process.arch} tidak didukung`);
-  await download(`${FFMPEG_RELEASE}ffmpeg-${process.platform}-${arch}.gz`, target, 5 * 1024 * 1024, true);
-}
-
-/**
- * Cari ffmpeg yang bisa jalan: FFMPEG_PATH, @ffmpeg-installer/ffmpeg, ffmpeg sistem, lalu unduh otomatis.
- * Mengembalikan { file, source } atau null (audio dikirim sebagai M4A tanpa konversi).
- */
-function ffmpegBinary() {
-  if (!ffmpegPromise) {
-    ffmpegPromise = (async () => {
-      const dir = await binDir().catch(() => null);
-      const cached = dir ? path.join(dir, `ffmpeg${EXE}`) : null;
-      const candidates = [
-        [process.env.FFMPEG_PATH, "FFMPEG_PATH"],
-        [installerPath(), "npm @ffmpeg-installer"],
-        [whichSync("ffmpeg"), "ffmpeg sistem"],
-        [cached && fs.existsSync(cached) ? cached : null, "unduhan otomatis"],
-      ];
-      for (const [file, source] of candidates) if (file && (await works(file, ["-hide_banner", "-version"]))) return { file, source };
-      if (cached) {
-        try {
-          await downloadFfmpeg(cached);
-          if (await works(cached, ["-hide_banner", "-version"])) return { file: cached, source: "unduhan otomatis" };
-        } catch (error) {
-          console.warn(`[yta] ffmpeg otomatis gagal: ${errorText(error)}`);
-        }
-      }
-      console.warn("[yta] ffmpeg tidak tersedia, audio dikirim sebagai M4A tanpa konversi.");
-      return null;
-    })();
-    // Hasil null tidak disimpan permanen, supaya dicoba lagi di permintaan berikutnya.
-    ffmpegPromise.then((found) => { if (!found) ffmpegPromise = null; });
-  }
-  return ffmpegPromise;
-}
-
-/**
- * Unduh audio ke tmp/yta/<acak>/ di folder bot dan ubah ke MP3.
- * Mengembalikan path file; pemanggil WAJIB memanggil cleanup() setelah selesai.
- */
-async function downloadAudio(videoId) {
-  const ytdlp = await ytdlpBinary();
-  const ffmpeg = (await ffmpegBinary())?.file;
-  await fsp.mkdir(WORK_DIR, { recursive: true });
-  const dir = await fsp.mkdtemp(path.join(WORK_DIR, `${videoId}-`));
-  const cleanup = () => fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
-  try {
-    const args = [
-      "--no-playlist", "--no-warnings", "--no-progress", "--no-part", "--no-cache-dir",
-      ...(ffmpeg
-        ? ["-f", "bestaudio[ext=m4a]/bestaudio", "-x", "--audio-format", "mp3", "--audio-quality", "128K", "--ffmpeg-location", ffmpeg]
-        : ["-f", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]"]),
-      "--max-filesize", `${MAX_AUDIO_MB}M`,
-      "--match-filter", `duration <= ${MAX_DURATION_SEC} & !is_live`,
-      "--js-runtimes", `node:${process.execPath}`,
-      "-o", path.join(dir, "audio.%(ext)s"),
-      "--print", "after_move:%(title)s\t%(duration)s\t%(filepath)s",
-      "--no-simulate",
-    ];
-    const cookies = process.env.YTDLP_COOKIES;
-    if (cookies) {
-      if (!fs.existsSync(cookies)) throw new Error(`File cookies YTDLP_COOKIES tidak ditemukan: ${cookies}`);
-      args.push("--cookies", cookies);
-    }
-    args.push(`https://www.youtube.com/watch?v=${videoId}`);
-    // YouTube kadang menolak client bawaan dari IP hosting; coba client lain sebelum menyerah.
-    let stdout;
-    for (const [index, client] of PLAYER_CLIENTS.entries()) {
-      try {
-        const extra = client ? ["--extractor-args", `youtube:player_client=${client}`] : [];
-        stdout = await run(ytdlp.cmd, [...ytdlp.pre, ...extra, ...args], 8 * 60 * 1000);
-        break;
-      } catch (error) {
-        if (!error.retryable || index === PLAYER_CLIENTS.length - 1) throw error;
-        console.warn(`[yta] ${videoId}: ${errorText(error)} -> coba client ${PLAYER_CLIENTS[index + 1]}`);
-        for (const name of await fsp.readdir(dir).catch(() => [])) await fsp.rm(path.join(dir, name), { force: true, recursive: true }).catch(() => {});
-      }
-    }
-    const line = stdout.trim().split("\n").filter(Boolean).pop();
-    if (!line) throw new Error(`Video tidak diunduh. Mungkin lebih dari ${MAX_DURATION_SEC / 60} menit, live, atau lebih dari ${MAX_AUDIO_MB} MB.`);
-    const [title, duration, filepath] = line.split("\t");
-    if (!filepath || !fs.existsSync(filepath)) throw new Error("File audio hasil unduhan tidak ditemukan.");
-    const { size } = await fsp.stat(filepath);
-    if (!size) throw new Error("File audio kosong.");
-    if (size > MAX_AUDIO_MB * 1024 * 1024) throw new Error(`Audio lebih dari ${MAX_AUDIO_MB} MB.`);
-    const ext = path.extname(filepath).slice(1).toLowerCase();
-    return { filepath, cleanup, ext, title: clean(title, 120), duration: Math.round(Number(duration)) || 0 };
-  } catch (error) {
-    await cleanup();
-    throw error;
-  }
+    .map((v) => ({
+      videoId: v.videoId,
+      title: v.title,
+      author: v.author?.name || "",
+      seconds: v.seconds,
+      timestamp: v.timestamp || "",
+    }));
 }
 
 function formatDuration(seconds) {
   if (!seconds) return "-";
-  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = Math.floor(seconds % 60);
-  return (h ? [h, String(m).padStart(2, "0")] : [m]).concat(String(s).padStart(2, "0")).join(":");
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-async function sendAudio(api, videoId) {
-  await api.reply("Mengunduh audio, mohon tunggu...");
-  const result = await downloadAudio(videoId);
-  const ext = result.ext === "mp3" ? "mp3" : "m4a";
-  const fileName = `${clean(result.title, 70).replace(/[\\/:*?"<>|]/g, "_")}.${ext}`;
+function findYtdlp() {
+  const candidates = [
+    process.env.YTDLP_PATH,
+    path.join(os.homedir(), ".cache", "supanigabot", "yt-dlp"),
+    path.join(__dirname, "..", "tmp", "bin", "yt-dlp"),
+    "yt-dlp",
+  ].filter(Boolean);
+
+  for (const p of candidates) {
+    try {
+      if (p === "yt-dlp" || fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return "yt-dlp";
+}
+
+function runYtdlp(args, timeout = 150000) {
+  return new Promise((resolve, reject) => {
+    const bin = findYtdlp();
+    execFile(bin, args, { timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+      if (err) {
+        const msg = String(stderr || err.message || "").trim();
+        return reject(new Error(msg.slice(0, 400) || "yt-dlp gagal"));
+      }
+      resolve(String(stdout || ""));
+    });
+  });
+}
+
+async function cleanAllCache() {
   try {
-    // Kirim langsung dari file (bukan buffer) supaya tidak menumpuk di memori.
-    const mimetype = ext === "mp3" ? "audio/mpeg" : "audio/mp4";
-    const audio = { audio: { url: result.filepath }, mimetype, fileName, ptt: false };
-    if (result.duration) audio.seconds = result.duration;
-    await api.sendMessage(audio);
-    await api.reply(`${result.title}\nDurasi: ${formatDuration(result.duration)}\nhttps://youtu.be/${videoId}`);
-  } finally {
-    await result.cleanup();
+    const files = await fsp.readdir(WORK_DIR);
+    await Promise.all(
+      files.map((name) =>
+        fsp.rm(path.join(WORK_DIR, name), { recursive: true, force: true }).catch(() => {})
+      )
+    );
+  } catch {}
+}
+
+async function downloadAudio(videoId) {
+  const dir = await fsp.mkdtemp(path.join(WORK_DIR, `${videoId}-`));
+  const cookiesFile = path.join(dir, "cookies.txt");
+  await fsp.writeFile(cookiesFile, HARDCODED_COOKIES);
+  const output = path.join(dir, "audio.%(ext)s");
+
+  const cleanup = async () => {
+    await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  };
+
+  const attempts = [
+    { client: "android", format: "bestaudio/best" },
+    { client: "ios", format: "bestaudio/best" },
+    { client: "tv", format: "bestaudio/best" },
+    { client: "web", format: "bestaudio/best" },
+    { client: null, format: "bestaudio/best" },
+    { client: "android", format: "best" },
+    { client: null, format: "best" },
+  ];
+
+  try {
+    let stdout = null;
+    let lastError = null;
+
+    for (const attempt of attempts) {
+      try {
+        const args = [
+          "--no-playlist",
+          "--no-warnings",
+          "--no-progress",
+          "--no-part",
+          "--no-cache-dir",
+          "--proxy", PROXY_URL,
+          "--cookies", cookiesFile,
+          "-f", attempt.format,
+          "--max-filesize", `${MAX_AUDIO_MB}M`,
+          "-o", output,
+          "--print", "after_move:%(title)s\t%(duration)s\t%(filepath)s",
+          "--no-simulate",
+        ];
+
+        if (attempt.client) {
+          args.push("--extractor-args", `youtube:player_client=${attempt.client}`);
+        }
+
+        args.push(`https://www.youtube.com/watch?v=${videoId}`);
+
+        stdout = await runYtdlp(args);
+        if (stdout && stdout.trim()) break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[yta] gagal → client=${attempt.client || "default"} | ${errorText(err).slice(0, 120)}`);
+
+        for (const name of await fsp.readdir(dir).catch(() => [])) {
+          if (name === "cookies.txt") continue;
+          await fsp.rm(path.join(dir, name), { force: true, recursive: true }).catch(() => {});
+        }
+      }
+    }
+
+    if (!stdout) throw lastError || new Error("Semua client & format gagal");
+
+    const line = stdout.trim().split("\n").filter(Boolean).pop();
+    if (!line) throw new Error("Gagal mengunduh audio");
+
+    const [title, duration, filepath] = line.split("\t");
+    if (!filepath || !fs.existsSync(filepath)) throw new Error("File audio tidak ditemukan");
+
+    const stat = await fsp.stat(filepath);
+    if (stat.size < 10000) throw new Error("File audio terlalu kecil");
+
+    const ext = path.extname(filepath).slice(1).toLowerCase() || "m4a";
+
+    return {
+      filepath,
+      title: clean(title, 100),
+      duration: Math.round(Number(duration)) || 0,
+      mimetype: ext === "webm" ? "audio/webm" : "audio/mp4",
+      cleanup,
+    };
+  } catch (err) {
+    await cleanup();
+    throw err;
   }
 }
 
-async function statusText() {
-  const [ytdlp, ffmpeg] = await Promise.all([
-    ytdlpBinary().then((found) => `${found.source}, versi ${found.version}`).catch((error) => `GAGAL - ${errorText(error)}`),
-    ffmpegBinary().then((found) => (found ? `${found.source} (audio MP3)` : "tidak ada (audio dikirim M4A)")).catch(() => "tidak ada (audio dikirim M4A)"),
-  ]);
-  return `*Status YTA*\nVersi: ${YTA_VERSION}\nSistem: ${process.platform}/${process.arch}, Node ${process.version}\nyt-dlp: ${ytdlp}\nffmpeg: ${ffmpeg}`;
-}
+async function sendAudio(api, videoId, fallbackTitle = "") {
+  await api.reply("Mengunduh audio...");
 
-// Siapkan yt-dlp dan ffmpeg sejak bot menyala, supaya permintaan pertama cepat
-// dan masalah di hosting langsung terlihat di console.
-setTimeout(() => {
-  Promise.all([ytdlpBinary(), ffmpegBinary()])
-    .then(([ytdlp, ffmpeg]) => console.log(`[yta] Siap v${YTA_VERSION}: yt-dlp ${ytdlp.version} (${ytdlp.source}), ffmpeg ${ffmpeg ? ffmpeg.source : "tidak ada, kirim M4A"}`))
-    .catch((error) => console.warn(`[yta] Belum siap: ${errorText(error)}`));
-}, 2000).unref?.();
+  let cleanup = null;
+
+  try {
+    const result = await downloadAudio(videoId);
+    cleanup = result.cleanup;
+
+    await api.sendMessage({
+      audio: { url: result.filepath },
+      mimetype: result.mimetype,
+      fileName: `${clean(result.title || fallbackTitle || videoId, 60)}.m4a`,
+      ptt: false,
+    });
+
+    await api.reply(
+      `*${result.title || fallbackTitle}*\n` +
+        `Durasi: ${formatDuration(result.duration)}\n` +
+        `https://youtu.be/${videoId}`
+    );
+  } catch (err) {
+    if (cleanup) await cleanup();
+    await cleanAllCache();
+    throw err;
+  } finally {
+    if (cleanup) await cleanup();
+  }
+}
 
 module.exports = {
   config: {
     name: "yta",
-    aliases: [],
-    cooldown: 5,
-    description: "Mencari lagu di YouTube atau menerima link, lalu mengirimkan audionya",
-    usage: "yta <judul | link YouTube>, lalu ketik nomor 1-10. Gunakan yta cek untuk status",
+    aliases: ["play"],
+    cooldown: 8,
+    description: "Download audio YouTube",
+    usage: "yta <judul | link>",
     category: "Media",
     price: 0,
     role: 0,
   },
-  _youtubeId: youtubeId,
-  _sendAudio: sendAudio,
-  _workDir: WORK_DIR,
-  _ffmpegBinary: ffmpegBinary,
-  _ytdlpBinary: ytdlpBinary,
-  _statusText: statusText,
-  _searchVideos: searchVideos,
-  hasPendingSelection(chatJid, senderNumber, _quotedMessageId, text = "") {
-    return !!selection.parseNumbers(text, { multiple: false }) && !!selection.get(chatJid, senderNumber, "yta");
+
+  hasPendingSelection(chatJid, senderNumber, _, text = "") {
+    return (
+      !!selection.parseNumbers(text, { multiple: false }) &&
+      !!selection.get(chatJid, senderNumber, "yta")
+    );
   },
-  onReply: async function ({ api, event, text }) {
+
+  async onReply({ api, event, text }) {
     const pending = selection.get(event.chatJid, event.senderNumber, "yta");
     const numbers = selection.parseNumbers(text, { multiple: false });
     if (!pending || !numbers) return false;
+
     const video = pending.results[numbers[0] - 1];
     if (!video) {
-      await api.reply(`Nomor tidak tersedia. Pilih 1-${pending.results.length}.`);
+      await api.reply(`Nomor tidak tersedia. Pilih 1-${pending.results.length}`);
       return true;
     }
+
     selection.clear(event.chatJid, event.senderNumber, "yta");
+
     try {
-      await sendAudio(api, video.videoId);
-    } catch (error) {
-      const detail = errorText(error);
-      console.error(`[yta] ${detail}`);
-      await api.reply(`YTA gagal: ${detail}`).catch(() => {});
+      await sendAudio(api, video.videoId, video.title);
+    } catch (err) {
+      console.error("[yta]", errorText(err));
+      await cleanAllCache();
+      await api.reply(`Gagal: ${errorText(err)}`);
     }
     return true;
   },
-  onStart: async function ({ api, args, event, prefix }) {
+
+  async onStart({ api, args, event, prefix }) {
     const query = args.join(" ").trim();
-    if (query.toLowerCase() === "cek") return api.reply(await statusText());
-    if (!query) return api.reply(`Gunakan: ${prefix}yta <judul lagu | link YouTube>\nContoh: ${prefix}yta cruel angel thesis`);
-    if (query.length > 200) return api.reply("Teks terlalu panjang (maksimal 200 karakter).");
+    if (!query) {
+      return api.reply(`Contoh:\n${prefix}yta cruel angel thesis\n${prefix}yta https://youtu.be/xxxxx`);
+    }
 
     try {
-      const linkId = youtubeId(query);
-      if (linkId) return await sendAudio(api, linkId);
-      if (/^https?:\/\//i.test(query)) return api.reply("Link itu bukan link video YouTube yang valid.");
+      const id = youtubeId(query);
+      if (id) return await sendAudio(api, id);
 
-      await api.reply(`Mencari "${clean(query, 80)}" di YouTube...`);
+      if (/^https?:\/\//i.test(query)) {
+        return api.reply("Link bukan YouTube yang valid.");
+      }
+
+      await api.reply(`Mencari "${clean(query, 60)}"...`);
       const results = await searchVideos(query);
-      if (!results.length) return api.reply("Tidak ada video YouTube untuk kata kunci itu.");
+      if (!results.length) return api.reply("Tidak ditemukan.");
 
-      const lines = results.map((v, i) => `${i + 1}. ${clean(v.title, 90)}\n    ${clean(v.author, 50)} | ${v.timestamp || formatDuration(v.seconds)}`);
-      // Simpan pilihan sebelum mengirim daftar, supaya angka yang diketik cepat tetap diterima.
-      selection.set(event.chatJid, event.senderNumber, "yta", {
-        results: results.map((v) => ({ videoId: v.videoId, title: v.title })),
-      }, SELECTION_TTL_MS);
-      await api.reply(`*Hasil YouTube: ${clean(query, 60)}*\n\n${lines.join("\n\n")}\n\nKetik nomor 1-${results.length} untuk mengunduh audio.\nBerlaku 10 menit.`);
-    } catch (error) {
-      const detail = errorText(error);
-      console.error(`[yta] ${detail}`);
-      await api.reply(`YTA gagal: ${detail}`).catch(() => {});
+      const lines = results.map(
+        (v, i) =>
+          `${i + 1}. ${clean(v.title, 70)}\n    ${clean(v.author, 40)} • ${v.timestamp || formatDuration(v.seconds)}`
+      );
+
+      selection.set(
+        event.chatJid,
+        event.senderNumber,
+        "yta",
+        {
+          results: results.map((v) => ({ videoId: v.videoId, title: v.title })),
+        },
+        SELECTION_TTL_MS
+      );
+
+      await api.reply(
+        `*Hasil pencarian:*\n\n${lines.join("\n\n")}\n\nKetik nomor 1-${results.length}`
+      );
+    } catch (err) {
+      console.error("[yta]", errorText(err));
+      await cleanAllCache();
+      await api.reply(`Error: ${errorText(err)}`);
     }
   },
 };

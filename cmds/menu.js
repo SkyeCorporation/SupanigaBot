@@ -41,12 +41,12 @@ module.exports = {
       "# *List Command*",
       "",
       "• *Helper*",
-      `${prefix}help, ${prefix}menu`,
+      `help, menu`,
     ];
     for (const [category, names] of [...categories.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       lines.push("", `• *${category}*`, names.join(", "));
     }
-    lines.push("", "_Supaniga MX's Penguin Project 1.0.0_");
+    lines.push("", "_SupanigaMX's Penguin Project 1.0.0_");
     await api.reply(lines.join("\n"));
   },
 };
