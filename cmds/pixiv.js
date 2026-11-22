@@ -1,3 +1,7 @@
+// ====================== PIXIV COOKIE ======================
+const PIXIV_COOKIE = "PHPSESSID=131203295_f2x2uEtrUrKp8KaqU3UAolsLlKClzc6S";
+// ==========================================================
+
 const pin = require("./pin.js");
 const { ProxyAgent, fetch: undiciFetch } = require("undici");
 
@@ -7,7 +11,6 @@ const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const RESULT_TTL = 15 * 60 * 1000;
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const SELECTION_RE = /^\d{1,2}(\s*,\s*\d{1,2})*$/;
-const BLOCKED_ADULT_TAGS = /ロリ|ようじょ|幼女|幼児|児童|ショタ|小学生|中学生|子供|こども|loli|shota|child|kid\b|underage|toddler/i;
 const searches = new Map();
 
 // ====================== PROXY HARDCODED ======================
@@ -56,8 +59,13 @@ function parseSelection(text) {
   return [...new Set(value.split(",").map((part) => Number(part.trim())))];
 }
 
-function headers(extra = {}) {
-  // Cookie sementara dinonaktifkan agar mirip curl yang berhasil
+function getCookie() {
+  const raw = String(PIXIV_COOKIE || "").trim();
+  if (!raw) return "";
+  return raw.includes("=") ? raw : "PHPSESSID=" + raw;
+}
+
+function headers(useCookie = false, extra = {}) {
   const h = {
     "User-Agent": UA,
     "Accept": "application/json",
@@ -69,16 +77,22 @@ function headers(extra = {}) {
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
   };
+
+  if (useCookie) {
+    const cookie = getCookie();
+    if (cookie) h["Cookie"] = cookie;
+  }
+
   return Object.assign(h, extra);
 }
 
-async function pixivApi(pathAndQuery) {
+async function pixivApi(pathAndQuery, useCookie = false) {
   const url = "https://www.pixiv.net/ajax/" + pathAndQuery;
-  console.log("[pixiv] Request:", url);
+  console.log("[pixiv] Request:", url, "| Cookie:", useCookie ? "ON" : "OFF");
 
   const response = await doFetch(url, {
     method: "GET",
-    headers: headers(),
+    headers: headers(useCookie),
     signal: AbortSignal.timeout(25000),
   });
 
@@ -113,7 +127,7 @@ function imageHosts() {
 async function fetchImage(url, maxBytes) {
   const direct = new URL(url).hostname === "i.pximg.net";
   const opts = {
-    headers: direct ? headers({ Accept: "image/*" }) : { "User-Agent": UA, Accept: "image/*" },
+    headers: direct ? headers(false, { Accept: "image/*" }) : { "User-Agent": UA, Accept: "image/*" },
     redirect: "follow",
     signal: AbortSignal.timeout(25000),
   };
@@ -154,10 +168,11 @@ function previewUrl(thumb) {
 }
 
 function isAllowed(work, adult) {
-  if (!work || !work.id || Number(work.xRestrict) === 2) return false;
+  if (!work || !work.id) return false;
+  // R-18G tetap diblokir
+  if (Number(work.xRestrict) === 2) return false;
   if (!adult) return Number(work.xRestrict) === 0;
-  if (Number(work.xRestrict) !== 1) return false;
-  return !BLOCKED_ADULT_TAGS.test([work.title, ...(work.tags || [])].join(" "));
+  return Number(work.xRestrict) === 1;
 }
 
 function toItem(work) {
@@ -190,7 +205,8 @@ async function searchPixiv(keyword, options) {
   });
   if (noAi) params.set("ai_type", "1");
 
-  const body = await pixivApi("search/artworks/" + encodeURIComponent(keyword) + "?" + params.toString());
+  const body = await pixivApi("search/artworks/" + encodeURIComponent(keyword) + "?" + params.toString(), adult);
+
   const list = [];
   if (popular && page === 1) {
     list.push(...(body.popular?.permanent || []), ...(body.popular?.recent || []));
@@ -208,8 +224,8 @@ async function searchPixiv(keyword, options) {
   return { items, total: Number(body.illustManga?.total) || items.length };
 }
 
-async function sendWork(api, item, number) {
-  const pages = await pixivApi("illust/" + item.id + "/pages?lang=en");
+async function sendWork(api, item, number, useCookie = false) {
+  const pages = await pixivApi("illust/" + item.id + "/pages?lang=en", useCookie);
   const list = (Array.isArray(pages) ? pages : []).slice(0, MAX_PAGES);
   if (!list.length) throw new Error("Halaman karya tidak ditemukan.");
 
@@ -293,7 +309,7 @@ module.exports = {
 
   onStart: async function (ctx) {
     try {
-      console.log("[pixiv] onStart | Proxy: Hardcoded | Cookie: OFF");
+      console.log("[pixiv] onStart | Proxy: Hardcoded");
 
       const { api, event, args, prefix } = ctx;
 
@@ -321,16 +337,13 @@ module.exports = {
         return api.reply(usage);
       }
 
-      if (adult && event.isGroup) {
-        return api.reply("Mode -r18 hanya bisa dipakai di chat pribadi dengan bot.");
-      }
-      if (adult) {
-        return api.reply("Mode -r18 sementara dinonaktifkan karena cookie sedang dimatikan.");
+      if (adult && !getCookie()) {
+        return api.reply("Mode -r18 butuh cookie. Pastikan PIXIV_COOKIE di baris 1 sudah diisi dengan benar.");
       }
 
       const id = workId(keyword);
       if (id) {
-        const work = await pixivApi("illust/" + id + "?lang=en");
+        const work = await pixivApi("illust/" + id + "?lang=en", adult);
         const tags = (work.tags?.tags || []).map((t) => t.tag);
         const info = Object.assign({}, work, {
           id: work.illustId || id,
@@ -338,16 +351,15 @@ module.exports = {
           url: work.urls?.thumb || "",
         });
         const isAdult = Number(work.xRestrict) > 0;
-        if (isAdult && event.isGroup) return api.reply("Karya ini R-18 dan hanya bisa dikirim di chat pribadi.");
-        if (!isAllowed(info, isAdult)) return api.reply("Karya ini tidak bisa dikirim oleh bot.");
-        return await sendWork(api, toItem(info));
+        if (!isAllowed(info, isAdult || adult)) return api.reply("Karya ini tidak bisa dikirim oleh bot.");
+        return await sendWork(api, toItem(info), null, isAdult || adult);
       }
 
-      await api.reply('Mencari "' + clean(keyword, 60) + '" di Pixiv...');
+      await api.reply('Mencari "' + clean(keyword, 60) + '" di Pixiv' + (adult ? " (R-18)" : "") + "...");
 
       const result = await searchPixiv(keyword, {
         page,
-        adult: false,
+        adult,
         popular: flags.has("populer"),
         noAi: flags.has("noai"),
       });
@@ -356,7 +368,10 @@ module.exports = {
       const total = result.total;
 
       if (!items.length) {
-        return api.reply('Tidak ada karya Pixiv untuk "' + clean(keyword, 60) + '" di halaman ' + page + ". Coba tag bahasa Jepang, contoh 初音ミク.");
+        const hint = adult
+          ? " Pastikan cookie masih valid dan akun sudah mengaktifkan konten R-18."
+          : " Coba tag bahasa Jepang, contoh 初音ミク.";
+        return api.reply('Tidak ada karya Pixiv untuk "' + clean(keyword, 60) + '" di halaman ' + page + "." + hint);
       }
 
       const downloads = await Promise.allSettled(
@@ -391,12 +406,14 @@ module.exports = {
 
       searches.set(keyFor(chatJid, senderNumber), {
         items: shown,
+        adult,
         createdAt: Date.now(),
         expiresAt: Date.now() + RESULT_TTL,
       });
 
       const tagList = [];
       if (flags.has("populer")) tagList.push("populer");
+      if (adult) tagList.push("R-18");
       if (flags.has("noai")) tagList.push("tanpa AI");
 
       let caption = "*Pixiv: " + clean(keyword, 60) + "*";
@@ -443,10 +460,11 @@ module.exports = {
 
       searches.delete(key);
       const failed = [];
+      const useCookie = !!result.adult;
 
       for (const n of numbers) {
         try {
-          await sendWork(api, result.items[n - 1], n);
+          await sendWork(api, result.items[n - 1], n, useCookie);
         } catch (error) {
           failed.push(n + " (" + errorText(error) + ")");
         }
