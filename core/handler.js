@@ -9,7 +9,7 @@ import { log } from "./logger.js";
 import { resolveNumber, numberToJid, normalizeNumber, maskNumber } from "./number.js";
 import { getRoleLevel, shouldRespond, hasPermission, isFreeOfCharge, ROLE_NAMES } from "./permissions.js";
 import { state, bus } from "./state.js";
-import { EXP_PER_COMMAND, EXP_PER_MESSAGE, MESSAGE_EXP_COOLDOWN_MS } from "./level.js";
+import { EXP_PER_COMMAND, EXP_PER_MESSAGE, MESSAGE_EXP_COOLDOWN_MS, randomMessageMoney } from "./level.js";
 
 const cooldowns = new Map();
 const messageExpAt = new Map();
@@ -242,6 +242,11 @@ async function grantMessageExp(api, nomor) {
   messageExpAt.set(nomor, Date.now());
   if (messageExpAt.size > 5000) messageExpAt.delete(messageExpAt.keys().next().value);
   await grantExp(api, nomor, EXP_PER_MESSAGE);
+  try {
+    await usersData.addMoney(nomor, randomMessageMoney());
+  } catch (error) {
+    log.warn(`Gagal menambah saldo pesan: ${errorText(error)}`);
+  }
 }
 
 function toContent(content) {

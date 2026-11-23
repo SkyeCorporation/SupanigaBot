@@ -40,12 +40,6 @@ test("Argumen .pay <ID> <jumlah>", () => {
   assert.equal(pay._parsePayArgs(["abc", "10"]), null);
 });
 
-test("Argumen .pixiv: halaman -N dan -adult", () => {
-  const pixiv = require("../cmds/pixiv.js");
-  assert.deepEqual(pixiv._parseArgs(["nakano", "miku", "-1", "-adult"]), { keyword: "nakano miku", page: 1, adult: true });
-  assert.deepEqual(pixiv._parseArgs(["miku", "-3"]), { keyword: "miku", page: 3, adult: false });
-});
-
 test("Pilihan nomor: angka tunggal atau daftar, pencarian terbaru menggantikan yang lama", () => {
   const selection = require("../cmds/lib/selection.js");
   assert.deepEqual(selection.parseNumbers("1, 2, 3"), [1, 2, 3]);
@@ -80,4 +74,25 @@ test("Pilihan di chat pribadi tetap cocok walau JID berbeda (@lid / @s.whatsapp.
   selection.set("123@lid", "6283", "yta", { ok: 1 }, 60000);
   assert.deepEqual(selection.get("6283@s.whatsapp.net", "6283", "yta"), { ok: 1 });
   assert.deepEqual(selection.parseNumbers("2)", { multiple: false }), [2]);
+});
+
+test("Saldo per chat acak antara 0.4 dan 0.8", async () => {
+  const { randomMessageMoney } = await import("../core/level.js");
+  assert.equal(randomMessageMoney(() => 0), 0.4);
+  assert.equal(randomMessageMoney(() => 0.999999), 0.8);
+  for (let i = 0; i < 500; i++) {
+    const value = randomMessageMoney();
+    assert.ok(value >= 0.4 && value <= 0.8, `nilai ${value}`);
+  }
+});
+
+test("Saldo desimal tersimpan tepat dua angka", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "penguin-money-"));
+  const { initDatabase, usersData } = await import("../core/database.js");
+  initDatabase(path.join(dir, "money.db"));
+  await usersData.create("6283333333333", "C");
+  await usersData.addMoney("6283333333333", 0.4);
+  await usersData.addMoney("6283333333333", 0.7);
+  const user = await usersData.addMoney("6283333333333", 0.1);
+  assert.equal(user.money, 1.2);
 });

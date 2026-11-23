@@ -34,9 +34,9 @@ Admin bot yang ditetapkan pada `config.json` adalah nomor WhatsApp dengan format
 - `.pay <ID> <jumlah>` mengirim uang kepada user lain.
 - `.shell <perintah>` menjalankan perintah shell di server (khusus Admin Bot). Panel Shell juga tersedia di dashboard web. Ganti sandi dashboard di `config.json` sebelum dipakai, atau set `DISABLE_SHELL=1` untuk menonaktifkan.
 
-## Level dan EXP
+## Level, EXP, dan saldo per chat
 
-Setiap command yang berhasil memberi 10 EXP. Pesan biasa memberi 3 EXP, paling banyak sekali per menit. Naik level membutuhkan 100 x level saat ini.
+Setiap command yang berhasil memberi 10 EXP. Pesan biasa memberi 3 EXP dan saldo acak 0,4 sampai 0,8, paling banyak sekali per menit. Saldo disimpan dengan dua angka desimal. Naik level membutuhkan 100 x level saat ini.
 
 ## Tes
 

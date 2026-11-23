@@ -17,7 +17,7 @@ const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const f1 = (n) => Math.round(n * 10) / 10;
 
 function formatMoney(value) {
-  return Math.trunc(Number(value) || 0).toLocaleString("id-ID");
+  return (Math.round((Number(value) || 0) * 100) / 100).toLocaleString("id-ID", { maximumFractionDigits: 2 });
 }
 
 async function fetchAvatar(url) {

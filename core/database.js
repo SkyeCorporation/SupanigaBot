@@ -7,7 +7,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { DATABASE_DIR } from "./paths.js";
 import { normalizeNumber } from "./number.js";
-import { applyExp, expToNext } from "./level.js";
+import { applyExp, expToNext, roundMoney } from "./level.js";
 
 let db = null;
 
@@ -58,7 +58,7 @@ function toUser(row) {
     nomor: row.nomor,
     nama: row.nama,
     userID: row.userID,
-    money: row.money,
+    money: roundMoney(row.money),
     level: row.level ?? 1,
     exp: row.exp ?? 0,
     expToNext: expToNext(row.level ?? 1),
@@ -104,7 +104,7 @@ export const usersData = {
     const current = await this.getOrCreate(n);
     const next = {
       nama: data.nama ?? current.nama,
-      money: Math.trunc(Number(data.money ?? current.money)) || 0,
+      money: roundMoney(data.money ?? current.money),
       banned: data.status?.banned ?? current.status.banned,
       bannedReason: data.status?.bannedReason !== undefined ? data.status.bannedReason : current.status.bannedReason,
     };
@@ -117,11 +117,11 @@ export const usersData = {
   },
   async addMoney(nomor, amount) {
     const u = await this.getOrCreate(nomor);
-    return this.set(u.nomor, { money: u.money + Math.trunc(Number(amount) || 0) });
+    return this.set(u.nomor, { money: roundMoney(u.money + roundMoney(amount)) });
   },
   async subtractMoney(nomor, amount) {
     const u = await this.getOrCreate(nomor);
-    return this.set(u.nomor, { money: u.money - Math.trunc(Number(amount) || 0) });
+    return this.set(u.nomor, { money: roundMoney(u.money - roundMoney(amount)) });
   },
   /** Tambah EXP; mengembalikan { user, leveledUp } (leveledUp = jumlah kenaikan level). */
   async addExp(nomor, amount) {
@@ -152,8 +152,8 @@ export const usersData = {
       if (!sender) throw fail("SENDER_NOT_FOUND", "Pengirim tidak ditemukan.");
       if (!target) throw fail("TARGET_NOT_FOUND", "Penerima tidak ditemukan.");
       if (sender.money < value) throw fail("INSUFFICIENT_FUNDS", "Saldo tidak mencukupi.");
-      database.prepare("UPDATE users SET money = money - ?, updatedAt=CURRENT_TIMESTAMP WHERE nomor = ?").run(value, from);
-      database.prepare("UPDATE users SET money = money + ?, updatedAt=CURRENT_TIMESTAMP WHERE nomor = ?").run(value, to);
+      database.prepare("UPDATE users SET money = ROUND(money - ?, 2), updatedAt=CURRENT_TIMESTAMP WHERE nomor = ?").run(value, from);
+      database.prepare("UPDATE users SET money = ROUND(money + ?, 2), updatedAt=CURRENT_TIMESTAMP WHERE nomor = ?").run(value, to);
     });
     run();
     return { from: await this.get(from), to: await this.get(to) };
