@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Supaniga MX's — Penguin 1.0.0 Pro · Dashboard</title>
-    <meta name="description" content="Dashboard bot WhatsApp Supaniga MX's Penguin: QR Code, spesifikasi hosting, dan console live." />
+    <meta name="description" content="Dashboard bot WhatsApp Supaniga MX's Penguin: QR Code, spesifikasi hosting, console live, shell, dan file manager." />
     <meta name="theme-color" content="#05070d" />
     <meta name="robots" content="noindex" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,7 +14,8 @@
       rel="stylesheet"
     />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Cellipse cx=%2232%22 cy=%2236%22 rx=%2219%22 ry=%2223%22 fill=%22%2322d3ee%22/%3E%3Cellipse cx=%2232%22 cy=%2240%22 rx=%2212%22 ry=%2217%22 fill=%22%23f1f5f9%22/%3E%3Cpath d=%22M28 29 L32 33 L36 29 Z%22 fill=%22%23a3e635%22/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./vendor/codemirror/codemirror.bundle.css?v=1" />
+    <link rel="stylesheet" href="./style.css?v=2" />
   </head>
   <body>
     <!-- Latar belakang dinamis -->
@@ -203,6 +204,69 @@
           <p class="console-note mono">Hanya untuk admin. Perintah dijalankan langsung di server dengan batas waktu 60 detik dan setiap perintah dicatat di console.</p>
         </article>
 
+        <!-- FILE MANAGER -->
+        <article class="card glass fm-card span-12 reveal" id="fmCard">
+          <div class="card-head">
+            <h3><span class="dots"><i></i><i></i><i></i></span> File Manager</h3>
+            <div class="fm-head-actions">
+              <span class="mono tag" id="fmSummary">memuat…</span>
+              <button class="btn btn-ghost sm" id="fmFullscreen" type="button" title="Layar penuh (Esc untuk keluar)">Layar penuh</button>
+            </div>
+          </div>
+          <div class="fm">
+            <aside class="fm-side" aria-label="Daftar file bot">
+              <input id="fmFilter" class="fm-filter mono" type="search" placeholder="Cari file…" aria-label="Cari file" spellcheck="false" />
+              <div class="fm-side-btns">
+                <button class="btn btn-ghost sm" id="fmNewFile" type="button" title="Buat file baru di folder tujuan">+ File</button>
+                <button class="btn btn-ghost sm" id="fmNewDir" type="button" title="Buat folder baru di folder tujuan">+ Folder</button>
+                <button class="btn btn-ghost sm" id="fmUpload" type="button" title="Unggah file ke folder tujuan">Unggah</button>
+                <button class="btn btn-ghost sm" id="fmRefresh" type="button" title="Muat ulang daftar file" aria-label="Muat ulang daftar file">↻</button>
+                <input id="fmUploadInput" type="file" multiple hidden />
+              </div>
+              <div class="fm-target mono">tujuan: <b id="fmTarget">/</b></div>
+              <div class="fm-tree mono" id="fmTree" role="tree"></div>
+            </aside>
+            <section class="fm-main">
+              <div class="fm-tabs" id="fmTabs" role="tablist" aria-label="File yang terbuka"></div>
+              <div class="fm-toolbar">
+                <div class="fm-crumb mono" id="fmCrumb">Belum ada file yang dibuka</div>
+                <div class="fm-actions">
+                  <button class="btn btn-primary sm" id="fmSave" type="button" disabled title="Simpan (Ctrl+S)">Simpan</button>
+                  <button class="btn btn-ghost sm" id="fmSaveReload" type="button" hidden title="Simpan lalu muat ulang semua command">Simpan &amp; reload</button>
+                  <button class="btn btn-ghost sm" id="fmRevert" type="button" disabled title="Ambil ulang isi file dari server">Muat ulang</button>
+                  <button class="btn btn-ghost sm" id="fmRename" type="button" disabled>Ganti nama</button>
+                  <a class="btn btn-ghost sm" id="fmDownload" aria-disabled="true">Unduh</a>
+                  <button class="btn btn-ghost sm fm-danger" id="fmDelete" type="button" disabled>Hapus</button>
+                </div>
+              </div>
+              <div class="fm-stage" id="fmStage">
+                <div id="fmEditor" class="fm-editor" hidden></div>
+                <div id="fmPreview" class="fm-preview" hidden></div>
+                <div id="fmEmpty" class="fm-empty">
+                  <p class="eyebrow mono">// editor</p>
+                  <h4>Pilih file di sebelah kiri untuk mulai mengedit</h4>
+                  <ul class="mono">
+                    <li><kbd>Ctrl</kbd>+<kbd>S</kbd> simpan</li>
+                    <li><kbd>Ctrl</kbd>+<kbd>F</kbd> cari, <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>F</kbd> ganti</li>
+                    <li><kbd>Alt</kbd>+<kbd>G</kbd> lompat ke baris</li>
+                    <li><kbd>Ctrl</kbd>+<kbd>/</kbd> komentar baris</li>
+                    <li>Seret file ke area ini untuk mengunggah</li>
+                  </ul>
+                </div>
+                <div id="fmDrop" class="fm-drop mono" hidden>Lepas untuk mengunggah ke <b id="fmDropTarget">/</b></div>
+              </div>
+              <div id="fmProblem" class="fm-problem mono" role="alert" hidden></div>
+              <div class="fm-status mono">
+                <span id="fmLang">—</span>
+                <span id="fmCursor"></span>
+                <span id="fmSize"></span>
+                <span id="fmState"></span>
+              </div>
+            </section>
+          </div>
+          <p class="console-note mono">Sesi WhatsApp, file .env, database, .git, dan node_modules dilindungi dan tidak ditampilkan. File JavaScript dan JSON diperiksa sintaksnya sebelum disimpan.</p>
+        </article>
+
         <!-- COMMANDS -->
         <article class="card glass span-8 reveal">
           <div class="card-head">
@@ -235,7 +299,18 @@
       </footer>
     </main>
 
+    <dialog id="fmDialog" class="fm-dialog glass">
+      <form method="dialog" id="fmDialogForm">
+        <h4 id="fmDialogTitle"></h4>
+        <p id="fmDialogText"></p>
+        <input id="fmDialogInput" class="fm-filter mono" type="text" spellcheck="false" hidden />
+        <div class="fm-dialog-btns" id="fmDialogBtns"></div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast mono" role="status"></div>
-    <script src="./app.js" defer></script>
+    <script src="./vendor/codemirror/codemirror.bundle.js?v=1" defer></script>
+    <script src="./app.js?v=2b" defer></script>
+    <script src="./file-manager.js?v=2" defer></script>
   </body>
 </html>

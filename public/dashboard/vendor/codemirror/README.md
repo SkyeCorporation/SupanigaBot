@@ -1,0 +1,1 @@
+CodeMirror 5.65.16 (MIT). Bundel berisi core, mode javascript/css/xml/htmlmixed/markdown/shell/yaml/properties, serta addon matchbrackets, closebrackets, active-line, search, dialog, comment, dan jump-to-line.

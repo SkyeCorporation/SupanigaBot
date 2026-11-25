@@ -1,6 +1,6 @@
 /**
  * Web dashboard (Express) — QR Code, spesifikasi hosting, console live.
- * Dashboard file editor is deliberately limited to approved text files.
+ * File manager dashboard memakai core/files.js (path sensitif selalu ditolak).
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -15,10 +15,13 @@ import { publicCommands, loadCommands } from "./commands.js";
 import { usersData, groupsData } from "./database.js";
 import { logoutBot } from "./bot.js";
 import { runShell, shellEnabled } from "./shell.js";
+import {
+  listTree, readFile, writeFile, createEntry, renameEntry, deleteEntry, uploadFile,
+  checkSyntax, resolvePath, mimeOf, MAX_TEXT_BYTES, MAX_UPLOAD_BYTES,
+} from "./files.js";
 
 const COOKIE = "penguin_sid";
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_EDIT_BYTES = 256 * 1024;
 const sessions = new Map(); // token -> expiresAt
 const failures = new Map(); // ip -> { count, until }
 
@@ -71,59 +74,6 @@ function requireSameOrigin(req, res, next) {
   next();
 }
 
-// Only existing command plugins and dashboard assets are editable. Config,
-// credentials, databases, dependencies, and server/auth code are excluded.
-function isEditablePath(relativePath) {
-  if (typeof relativePath !== "string" || relativePath.length > 240) return false;
-  const normalized = relativePath.replaceAll("\\", "/");
-  if (normalized !== relativePath || normalized.startsWith("/") || normalized.split("/").some((part) => !part || part === "." || part === "..")) return false;
-  return /^cmds\/[A-Za-z0-9_.-]+\.js$/.test(normalized) ||
-    /^public\/dashboard\/[A-Za-z0-9_.-]+\.(?:html|css|js)$/.test(normalized) ||
-    normalized === "README.md";
-}
-
-function resolveEditableFile(relativePath) {
-  if (!isEditablePath(relativePath)) throw Object.assign(new Error("File ini tidak termasuk daftar file yang boleh diedit."), { status: 400 });
-  const absolute = path.resolve(ROOT, relativePath);
-  if (!absolute.startsWith(`${ROOT}${path.sep}`)) throw Object.assign(new Error("Path di luar project ditolak."), { status: 400 });
-  const stat = fs.lstatSync(absolute);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw Object.assign(new Error("Hanya file biasa yang dapat diedit; symlink dan direktori ditolak."), { status: 400 });
-  const real = fs.realpathSync(absolute);
-  if (!real.startsWith(`${ROOT}${path.sep}`)) throw Object.assign(new Error("File berada di luar root project."), { status: 400 });
-  return { absolute, stat };
-}
-
-function fileHash(content) {
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-function listEditableFiles() {
-  const files = [];
-  for (const directory of ["cmds", "public/dashboard"]) {
-    const absoluteDir = path.join(ROOT, directory);
-    if (!fs.existsSync(absoluteDir)) continue;
-    for (const entry of fs.readdirSync(absoluteDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const relativePath = `${directory}/${entry.name}`;
-      if (!isEditablePath(relativePath)) continue;
-      try {
-        const { absolute } = resolveEditableFile(relativePath);
-        files.push({ path: relativePath, size: fs.statSync(absolute).size });
-      } catch {
-        // Ignore inaccessible or symlinked entries rather than exposing them.
-      }
-    }
-  }
-  const readme = path.join(ROOT, "README.md");
-  if (fs.existsSync(readme)) {
-    try {
-      const { absolute } = resolveEditableFile("README.md");
-      files.push({ path: "README.md", size: fs.statSync(absolute).size });
-    } catch { /* ignore */ }
-  }
-  return files.sort((a, b) => a.path.localeCompare(b.path));
-}
-
 async function overview() {
   const [users, groups, groupList] = await Promise.all([usersData.count(), groupsData.count(), groupsData.getAll()]);
   return {
@@ -144,7 +94,7 @@ export function startWeb() {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", true);
-  app.use(express.json({ limit: "300kb" }));
+  app.use(express.json({ limit: "2mb" }));
 
   app.get("/api/health", (_req, res) => res.json({ ok: true, app: "supaniga-penguin" }));
   app.get("/api/session", (req, res) => res.json({ authenticated: isAuthed(req), app: APP_INFO }));
@@ -181,51 +131,91 @@ export function startWeb() {
   app.get("/api/overview", requireAuth, async (_req, res) => res.json(await overview()));
   app.get("/api/system", requireAuth, (_req, res) => res.json(systemInfo()));
 
-  app.get("/api/files", requireAuth, (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ files: listEditableFiles(), maxBytes: MAX_EDIT_BYTES });
+  // ---------- File manager (seluruh folder bot, kecuali path yang dilindungi) ----------
+  const sendError = (res, error, fallback) => res.status(error.status || 500).json({ error: error.message || fallback });
+  const noStore = (_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); };
+
+  app.get("/api/fs/tree", requireAuth, noStore, (_req, res) => {
+    try { res.json({ ...listTree(), maxTextBytes: MAX_TEXT_BYTES, maxUploadBytes: MAX_UPLOAD_BYTES }); }
+    catch (error) { sendError(res, error, "Gagal membaca daftar file."); }
   });
 
-  app.get("/api/files/content", requireAuth, (req, res) => {
-    try {
-      const { absolute, stat } = resolveEditableFile(req.query.path);
-      if (stat.size > MAX_EDIT_BYTES) return res.status(413).json({ error: `File melebihi batas ${MAX_EDIT_BYTES} byte.` });
-      const content = fs.readFileSync(absolute, "utf8");
-      res.setHeader("Cache-Control", "no-store");
-      res.json({ path: req.query.path, content, sha256: fileHash(content), size: stat.size });
-    } catch (error) {
-      res.status(error.status || 500).json({ error: error.message || "Gagal membaca file." });
-    }
+  app.get("/api/fs/file", requireAuth, noStore, (req, res) => {
+    try { res.json(readFile(req.query.path)); }
+    catch (error) { sendError(res, error, "Gagal membaca file."); }
   });
 
-  app.put("/api/files/content", requireAuth, requireSameOrigin, (req, res) => {
+  // Isi mentah untuk pratinjau gambar dan unduhan. CSP sandbox mencegah file
+  // (misalnya SVG) menjalankan skrip di origin dashboard.
+  app.get("/api/fs/raw", requireAuth, noStore, (req, res) => {
     try {
-      const relativePath = req.body?.path;
-      const content = req.body?.content;
-      const expectedHash = req.body?.sha256;
+      const { relative, absolute } = resolvePath(req.query.path);
+      if (!fs.statSync(absolute).isFile()) return res.status(400).json({ error: "Yang dipilih bukan file." });
+      res.setHeader("Content-Type", mimeOf(relative));
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+      if (req.query.download) res.attachment(path.posix.basename(relative));
+      fs.createReadStream(absolute).on("error", (error) => sendError(res, error, "Gagal membaca file.")).pipe(res);
+    } catch (error) { sendError(res, error, "Gagal membaca file."); }
+  });
+
+  app.post("/api/fs/check", requireAuth, requireSameOrigin, async (req, res) => {
+    try {
+      if (typeof req.body?.content !== "string") return res.status(400).json({ error: "Konten file harus berupa teks." });
+      res.json(await checkSyntax(req.body.path, req.body.content));
+    } catch (error) { sendError(res, error, "Gagal memeriksa sintaks."); }
+  });
+
+  app.put("/api/fs/file", requireAuth, requireSameOrigin, async (req, res) => {
+    try {
+      const { path: target, content, sha256: expectedHash, force, skipCheck } = req.body || {};
       if (typeof content !== "string") return res.status(400).json({ error: "Konten file harus berupa teks." });
-      if (Buffer.byteLength(content, "utf8") > MAX_EDIT_BYTES) return res.status(413).json({ error: `Ukuran file maksimal ${MAX_EDIT_BYTES} byte.` });
-      if (typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedHash)) return res.status(400).json({ error: "Hash versi file tidak valid. Muat ulang file sebelum menyimpan." });
-
-      const { absolute, stat } = resolveEditableFile(relativePath);
-      if (stat.size > MAX_EDIT_BYTES) return res.status(413).json({ error: `File melebihi batas ${MAX_EDIT_BYTES} byte.` });
-      const current = fs.readFileSync(absolute, "utf8");
-      if (fileHash(current) !== expectedHash) return res.status(409).json({ error: "File berubah sejak dibuka. Muat ulang sebelum menyimpan agar perubahan tidak tertimpa." });
-
-      const tempPath = path.join(path.dirname(absolute), `.${path.basename(absolute)}.${crypto.randomBytes(8).toString("hex")}.tmp`);
-      try {
-        fs.writeFileSync(tempPath, content, { encoding: "utf8", flag: "wx", mode: stat.mode & 0o777 });
-        fs.renameSync(tempPath, absolute);
-      } catch (error) {
-        try { fs.rmSync(tempPath, { force: true }); } catch { /* ignore cleanup error */ }
-        throw error;
+      if (!skipCheck) {
+        const check = await checkSyntax(target, content);
+        if (!check.ok) return res.status(422).json({ error: "Sintaks tidak valid.", check });
       }
-      log.warn(`File project diedit dari dashboard: ${relativePath}`);
-      res.json({ ok: true, path: relativePath, sha256: fileHash(content), size: Buffer.byteLength(content, "utf8") });
-    } catch (error) {
-      res.status(error.status || 500).json({ error: error.message || "Gagal menyimpan file." });
-    }
+      const saved = writeFile(target, content, { expectedHash, force: force === true });
+      log.warn(`File diedit dari dashboard: ${saved.path}`);
+      res.json({ ok: true, ...saved });
+    } catch (error) { sendError(res, error, "Gagal menyimpan file."); }
   });
+
+  app.post("/api/fs/create", requireAuth, requireSameOrigin, (req, res) => {
+    try {
+      const type = req.body?.type === "dir" ? "dir" : "file";
+      const created = createEntry(req.body?.path, type, typeof req.body?.content === "string" ? req.body.content : "");
+      log.warn(`${type === "dir" ? "Folder" : "File"} dibuat dari dashboard: ${created.path}`);
+      res.json({ ok: true, ...created });
+    } catch (error) { sendError(res, error, "Gagal membuat file."); }
+  });
+
+  app.post("/api/fs/rename", requireAuth, requireSameOrigin, (req, res) => {
+    try {
+      const moved = renameEntry(req.body?.from, req.body?.to);
+      log.warn(`Dashboard mengganti nama: ${moved.from} -> ${moved.to}`);
+      res.json({ ok: true, ...moved });
+    } catch (error) { sendError(res, error, "Gagal mengganti nama."); }
+  });
+
+  app.post("/api/fs/delete", requireAuth, requireSameOrigin, (req, res) => {
+    try {
+      const removed = deleteEntry(req.body?.path);
+      log.warn(`Dashboard menghapus: ${removed.path}`);
+      res.json({ ok: true, ...removed });
+    } catch (error) { sendError(res, error, "Gagal menghapus."); }
+  });
+
+  app.post(
+    "/api/fs/upload", requireAuth, requireSameOrigin,
+    express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES }),
+    (req, res) => {
+      try {
+        const saved = uploadFile(req.query.path, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), { overwrite: req.query.overwrite === "1" });
+        log.warn(`File diunggah dari dashboard: ${saved.path} (${saved.size} byte)`);
+        res.json({ ok: true, ...saved });
+      } catch (error) { sendError(res, error, "Gagal mengunggah file."); }
+    },
+  );
 
   // Shell admin: hanya untuk sesi dashboard yang sudah login dan dari origin yang sama.
   app.get("/api/shell", requireAuth, (_req, res) => res.json({ enabled: shellEnabled(), cwd: ROOT }));
@@ -269,7 +259,18 @@ export function startWeb() {
     });
   });
 
-  app.use("/dashboard", express.static(DASHBOARD_DIR, { index: "index.html", maxAge: "1h" }));
+  app.use("/api", (error, _req, res, next) => {
+    if (!error) return next();
+    if (error.type === "entity.too.large") return res.status(413).json({ error: "Ukuran data melebihi batas yang diizinkan." });
+    res.status(error.status || 400).json({ error: error.message || "Permintaan tidak valid." });
+  });
+
+  app.use("/dashboard", express.static(DASHBOARD_DIR, {
+    index: "index.html",
+    maxAge: "1h",
+    // HTML selalu divalidasi ulang agar versi aset (?v=) terbaru langsung dipakai.
+    setHeaders: (res, filePath) => { if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache"); },
+  }));
   app.get("/", (_req, res) => res.redirect("/dashboard/"));
   const port = getPort();
   app.listen(port, "0.0.0.0", () => log.success(`Dashboard web aktif di port ${port} → buka http://localhost:${port}/dashboard/`));

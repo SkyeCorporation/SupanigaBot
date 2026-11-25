@@ -234,7 +234,7 @@
   setInterval(async () => { if (!state.online || $("#app").hidden) return; try { const r = await api("/api/overview"); if (r.ok && r.data) { state.overview = r.data; renderDatabase(r.data.database); } } catch (error) { showDashboardError(`Gagal memperbarui dashboard: ${error.message}`); } }, 15000);
 
   function showLogin() { state.es?.close(); $("#app").hidden = true; $("#login").hidden = false; setTimeout(() => $("#password")?.focus(), 50); }
-  function showApp() { $("#login").hidden = true; $("#app").hidden = false; const notice = ensureDashboardNotice(); notice.hidden = true; notice.textContent = "Memuat dashboard…"; loadOverview().then((loaded) => { if (loaded) { connectStream(); loadShellInfo(); } }).catch((error) => showDashboardError(`${error.message}. Dashboard tetap terbuka; periksa log server dan endpoint /api/overview.`)); }
+  function showApp() { $("#login").hidden = true; $("#app").hidden = false; const notice = ensureDashboardNotice(); notice.hidden = true; notice.textContent = "Memuat dashboard…"; window.dispatchEvent(new CustomEvent("penguin:ready")); loadOverview().then((loaded) => { if (loaded) { connectStream(); loadShellInfo(); } }).catch((error) => showDashboardError(`${error.message}. Dashboard tetap terbuka; periksa log server dan endpoint /api/overview.`)); }
 
   $("#loginForm")?.addEventListener("submit", async (e) => {
     e.preventDefault(); const btn = $("#loginBtn"), err = $("#loginError"); err.textContent = ""; btn.disabled = true;
@@ -247,6 +247,8 @@
     } catch { err.textContent = "Tidak bisa menghubungi server."; } finally { btn.disabled = false; }
   });
 
+  window.addEventListener("penguin:unauthorized", () => showLogin());
+  window.PenguinToast = toast;
   $("#logoutBtn")?.addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); showLogin(); });
   $("#waLogoutBtn")?.addEventListener("click", async () => { if (!confirm("Logout sesi WhatsApp? Bot akan membuat QR Code baru.")) return; const r = await api("/api/wa/logout", { method: "POST" }); toast(r.ok ? "Sesi dihapus, menunggu QR baru…" : "Gagal logout sesi"); });
   $("#reloadBtn")?.addEventListener("click", async () => { const r = await api("/api/cmds/reload", { method: "POST" }); if (r.ok) { renderCommands(r.data.commands, state.overview?.prefix || "."); toast(`${r.data.total} command dimuat ulang`); } else toast("Gagal reload command"); });
