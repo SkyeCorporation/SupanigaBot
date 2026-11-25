@@ -1,0 +1,13 @@
+{
+  "project": "Supaniga MX's Penguin",
+  "version": "1.0.0 Pro",
+  "codename": "EsdeathFour",
+  "updatedAt": "2026-11-25",
+  "updates": [
+    "Command .z: kartu info sistem & update bot",
+    "Editor file bot di dashboard admin",
+    "Kartu status user dengan level dan EXP",
+    "Kolase PIN & Pixiv bernomor tema space-tech",
+    "YTA mengirim audio lengkap lalu dihapus"
+  ]
+}
