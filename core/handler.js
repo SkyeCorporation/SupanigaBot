@@ -7,7 +7,7 @@ import { commands, commandList } from "./commands.js";
 import { usersData, groupsData } from "./database.js";
 import { log } from "./logger.js";
 import { resolveNumber, numberToJid, normalizeNumber, maskNumber } from "./number.js";
-import { getRoleLevel, shouldRespond, hasPermission, isFreeOfCharge, ROLE_NAMES } from "./permissions.js";
+import { getRoleLevel, shouldRespond, hasPermission, ROLE_NAMES } from "./permissions.js";
 import { state, bus } from "./state.js";
 import { EXP_PER_COMMAND, EXP_PER_MESSAGE, MESSAGE_EXP_COOLDOWN_MS, randomMessageMoney } from "./level.js";
 
@@ -188,13 +188,17 @@ export async function handleMessage(sock, msg) {
   }
 
   let charged = 0;
-  if (cfg.price > 0 && !isFreeOfCharge(roleLevel)) {
-    if (user.money < cfg.price) {
-      await api.reply(`💸 Saldo kamu kurang. Harga *${prefix}${cfg.name}*: ${cfg.price.toLocaleString("id-ID")} • Saldo: ${user.money.toLocaleString("id-ID")}`);
+  if (cfg.price > 0) {
+    try {
+      const updatedUser = await usersData.subtractMoney(nomor, cfg.price);
+      Object.assign(user, updatedUser);
+      charged = cfg.price;
+    } catch (error) {
+      if (error.code !== "INSUFFICIENT_FUNDS") throw error;
+      const current = await usersData.get(nomor);
+      await api.reply(`💸 Saldo kamu kurang. Harga *${prefix}${cfg.name}*: ${cfg.price.toLocaleString("id-ID")} • Saldo: ${(current?.money ?? 0).toLocaleString("id-ID")}`);
       return;
     }
-    await usersData.subtractMoney(nomor, cfg.price);
-    charged = cfg.price;
   }
   cooldowns.set(cdKey, Date.now());
 

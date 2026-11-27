@@ -117,11 +117,22 @@ export const usersData = {
   },
   async addMoney(nomor, amount) {
     const u = await this.getOrCreate(nomor);
-    return this.set(u.nomor, { money: roundMoney(u.money + roundMoney(amount)) });
+    getDb().prepare("UPDATE users SET money=ROUND(money + ?, 2), updatedAt=CURRENT_TIMESTAMP WHERE nomor=?")
+      .run(roundMoney(amount), u.nomor);
+    return this.get(u.nomor);
   },
   async subtractMoney(nomor, amount) {
+    const value = roundMoney(amount);
+    if (!Number.isFinite(Number(amount)) || value < 0) {
+      throw Object.assign(new Error("Harga tidak valid."), { code: "INVALID_AMOUNT" });
+    }
     const u = await this.getOrCreate(nomor);
-    return this.set(u.nomor, { money: roundMoney(u.money - roundMoney(amount)) });
+    const result = getDb().prepare("UPDATE users SET money=ROUND(money - ?, 2), updatedAt=CURRENT_TIMESTAMP WHERE nomor=? AND ROUND(money, 2) >= ?")
+      .run(value, u.nomor, value);
+    if (!result.changes) {
+      throw Object.assign(new Error("Saldo tidak mencukupi."), { code: "INSUFFICIENT_FUNDS" });
+    }
+    return this.get(u.nomor);
   },
   /** Tambah EXP; mengembalikan { user, leveledUp } (leveledUp = jumlah kenaikan level). */
   async addExp(nomor, amount) {

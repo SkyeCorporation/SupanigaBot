@@ -54,7 +54,3 @@ export function hasPermission(roleLevel, requiredRole = 0) {
   return Number(roleLevel) >= Number(requiredRole || 0);
 }
 
-/** Admin & moderator bot tidak dikenai harga command. */
-export function isFreeOfCharge(roleLevel) {
-  return roleLevel >= ROLE.MODERATOR;
-}
